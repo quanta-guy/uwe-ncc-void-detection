@@ -46,9 +46,14 @@ say "ENV"
   sudo apt-get update -qq && sudo apt-get install -y -qq python3-venv && python3 -m venv "$ROOT/venv"; }
 run "$PY" -m pip install -q --upgrade pip
 run "$PY" -m pip install -q numpy scipy pandas pillow scikit-image
-"$PY" -c "import torch" 2>/dev/null || run "$PY" -m pip install -q torch
+# NOT -q. torch drags in ~2.5GB of CUDA wheels and takes several minutes; with
+# output suppressed it looks like a hang, which is an invitation to Ctrl-C it.
+if ! "$PY" -c "import torch" 2>/dev/null; then
+  echo "installing torch - ~2.5GB of CUDA wheels, several minutes, do not interrupt" | tee -a "$LOG"
+  run "$PY" -m pip install torch
+fi
 "$PY" -c "import torch" 2>/dev/null || { echo "TORCH FAILED on $("$PY" -V)" | tee -a "$LOG"; exit 1; }
-run "$PY" -m pip install -q segmentation_models_pytorch albumentations
+run "$PY" -m pip install segmentation_models_pytorch albumentations
 # albumentations pulls opencv-python-headless; solution2 uses cv2 directly for
 # Hough circles, so fail loudly here rather than an hour into the run.
 run "$PY" -c "import cv2, albumentations as A; print('cv2', cv2.__version__, 'albumentations', A.__version__)" || exit 1
