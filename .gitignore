@@ -12,3 +12,4 @@ archive/
 data/
 evaluation.py
 solution2/*.log
+solution3/void_index.csv
