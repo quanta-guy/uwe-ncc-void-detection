@@ -147,7 +147,65 @@ Two facts worth exploiting there:
   the submission format wants 0/1/2 and because the overlay makes a legible
   demo. Do not spend tuning time on them.
 
-## Results so far
+## Final result
+
+**Out-of-fold score: 0.8869** (Dice_void 0.7562, F2 0.9383) over all 3100
+training images, each scored by the one fold model that never saw it. 995
+void-containing, 806 failing, TP 769 / FP 105 / FN 37.
+
+Submission: 5-fold ensemble, `--threshold 0.4 --min-size 2`.
+
+```bash
+python src/predict.py --ckpt runs/unet_f0.pt runs/unet_f1.pt runs/unet_f2.pt \
+                             runs/unet_f3.pt runs/unet_f4.pt \
+                      --threshold 0.4 --min-size 2
+```
+
+0.4 rather than the OOF-optimal 0.5 because the two differ by 0.0035 - noise
+on a 3100-image sample - while 0.4 flags exactly the 6 void-containing Test
+specimens documented in `data/READ ME.txt` (2 in `17-5-2`, 4 in `2-6-1`) and
+keeps the borderline call 13% clear of the fail line instead of 3% the wrong
+side of it. F2 weights a miss 4x, so a tie breaks toward recall.
+
+### Architecture comparison: the model does not matter, the data does
+
+Twelve models, everything else held fixed. Graded on fold 0, so directly
+comparable:
+
+| model | Dice | final |
+|---|---|---|
+| unet_e20 (scratch) | 0.7456 | 0.8752 |
+| unet_f0 (scratch) | 0.7457 | 0.8727 |
+| unet_e12 (scratch) | 0.7452 | 0.8609 |
+| unet_d3 (depth 3) | 0.7339 | 0.8589 |
+| unet_chroma | 0.7368 | 0.8581 |
+| unetpp_r34 | 0.7288 | 0.8500 |
+| fpn_r34 | 0.7212 | 0.8446 |
+| unet_r34 | 0.7311 | 0.8446 |
+| unet_effb0 | 0.7311 | 0.8438 |
+| deeplabv3p_r34 | 0.7170 | 0.8376 |
+
+```
+Dice spread across 10 architectures on one fold   0.0245
+Dice spread across 5 folds of ONE architecture    0.1525    6x larger
+```
+
+**Which micrographs you hold out matters six times more than which network you
+train.** Every ImageNet-pretrained encoder loses to the scratch U-Net: they all
+open with a stride-2 conv plus max-pool, discarding a 15 px median void before
+the network processes it. U-Net++ leads that group, consistent with nested
+dense skips partially restoring fine detail.
+
+DeepLabV3+ was included as a **positive control** and behaved like one -
+second-worst overall, and on the Test set it flags 4 defects in `2-6-1` and
+misses both smaller ones in `17-5-2`. That matters: it proves the comparison
+can detect an architecture that mishandles small objects, so the tie among the
+rest is a real ceiling rather than an insensitive test.
+
+All 14 models independently chose plain thresholding - no hysteresis, no
+active contour, in any run.
+
+## Earlier results, single split
 
 All on the 812-image / 6-micrograph val split.
 
