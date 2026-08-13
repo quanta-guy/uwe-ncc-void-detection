@@ -23,6 +23,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from PIL import Image
+from skimage.filters import apply_hysteresis_threshold
 from skimage.morphology import binary_dilation, disk, remove_small_objects
 
 REPO = Path(__file__).resolve().parents[1]
@@ -109,7 +110,7 @@ def void_prob(nets, img, device, tta=False):
 
 
 def to_mask(p_void, base, threshold=DEFAULT_THRESHOLD, min_size=DEFAULT_MIN_SIZE,
-            dilate=DEFAULT_DILATE):
+            dilate=DEFAULT_DILATE, low=None):
     """Threshold, despeckle, optionally dilate, stamp over the base labels.
 
     `dilate` corrects a measured bias: the model recovers only 10-25% of the
@@ -120,9 +121,21 @@ def to_mask(p_void, base, threshold=DEFAULT_THRESHOLD, min_size=DEFAULT_MIN_SIZE
     time, because judging applies its own line of 25 to whatever mask we
     submit; the correction has to live in the mask itself.
 
+    `low` switches thresholding to hysteresis: pixels above `threshold` are
+    seeds, and the region grows into *connected* pixels above `low`. This is
+    the cheap version of growing an active contour out to the real boundary.
+    Dilation grows blindly in every direction and pays for it in Dice;
+    hysteresis grows only where the model still sees evidence, so it can
+    recover an under-segmented void without inventing area around a correct
+    one. Which matters here because the model recovers as little as 10% of the
+    void pixels on the specimens it misses.
+
     Despeckling happens first, so dilation grows real voids and not noise.
     """
-    void = p_void > threshold
+    if low is not None and low < threshold:
+        void = apply_hysteresis_threshold(p_void, low, threshold)
+    else:
+        void = p_void > threshold
     if min_size > 1:
         void = remove_small_objects(void, min_size=min_size)
     if dilate:
@@ -132,12 +145,12 @@ def to_mask(p_void, base, threshold=DEFAULT_THRESHOLD, min_size=DEFAULT_MIN_SIZE
     return mask
 
 
-def write_masks(nets, df, out_dir, device, threshold, min_size, dilate=0, tta=False):
+def write_masks(nets, df, out_dir, device, threshold, min_size, dilate=0, tta=False, low=None):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     for _, row in df.iterrows():
         p_void, base = void_prob(nets, load_image(row["image"]), device, tta)
-        mask = to_mask(p_void, base, threshold, min_size, dilate)
+        mask = to_mask(p_void, base, threshold, min_size, dilate, low)
         Image.fromarray(mask).save(out_dir / f"{row['stem']}.png")
     print(f"wrote {len(df)} masks to {out_dir}")
 
@@ -216,35 +229,41 @@ def oof(ckpt_dir, device, thresholds, min_sizes, dilations, tta=False):
     return _sweep(*cached, thresholds, min_sizes, dilations)
 
 
-def tune(nets, df, device, thresholds, min_sizes, dilations, tta=False):
+def tune(nets, df, device, thresholds, min_sizes, dilations, lows=(None,), tta=False):
     print(f"caching predictions for {len(df)} val images{' (TTA x8)' if tta else ''}...")
     probs, bases, gts, ums = _collect(nets, df, device, tta)
-    return _sweep(probs, bases, gts, ums, thresholds, min_sizes, dilations)
+    return _sweep(probs, bases, gts, ums, thresholds, min_sizes, dilations, lows)
 
 
-def _sweep(probs, bases, gts, ums, thresholds, min_sizes, dilations):
+def _sweep(probs, bases, gts, ums, thresholds, min_sizes, dilations, lows=(None,)):
     facts = gt_facts(gts, ums)
     print(f"ground truth: {sum(1 for _, n in facts if n)} void-containing, "
           f"{sum(1 for s, _ in facts if s >= SEVERITY_THRESHOLD)} failing")
 
-    print(f"\n{'thresh':>7} {'min_size':>9} {'dilate':>7} {'Dice':>7} {'F2':>7} "
+    print(f"\n{'thresh':>7} {'low':>6} {'min_size':>9} {'dilate':>7} {'Dice':>7} {'F2':>7} "
           f"{'TP':>4} {'FP':>4} {'FN':>4} {'FINAL':>7}")
     best, rows = None, []
     for t in thresholds:
-        for m in min_sizes:
-            for d in dilations:
-                masks = [to_mask(p.astype(np.float32), b, t, m, d) for p, b in zip(probs, bases)]
-                mean_dice, dices, sevs = _measure(masks, gts, ums, facts)
-                final, f2, tp, fp, fn = _score_at(sevs, facts, mean_dice, bool(dices))
-                print(f"{t:7.2f} {m:9d} {d:7d} {mean_dice:7.4f} {f2:7.4f} "
-                      f"{tp:4d} {fp:4d} {fn:4d} {final:7.4f}")
-                rows.append({"threshold": t, "min_size": m, "dilate": d,
-                             "dice": round(mean_dice, 4), "f2": round(f2, 4),
-                             "tp": tp, "fp": fp, "fn": fn, "final": round(final, 4)})
-                if best is None or final > best[0]:
-                    best = (final, t, m, d)
+        for lo in lows:
+            # A floor at or above the seed level is just a plain threshold.
+            if lo is not None and lo >= t:
+                continue
+            for m in min_sizes:
+                for d in dilations:
+                    masks = [to_mask(p.astype(np.float32), b, t, m, d, lo)
+                             for p, b in zip(probs, bases)]
+                    mean_dice, dices, sevs = _measure(masks, gts, ums, facts)
+                    final, f2, tp, fp, fn = _score_at(sevs, facts, mean_dice, bool(dices))
+                    print(f"{t:7.2f} {str(lo):>6} {m:9d} {d:7d} {mean_dice:7.4f} {f2:7.4f} "
+                          f"{tp:4d} {fp:4d} {fn:4d} {final:7.4f}")
+                    rows.append({"threshold": t, "low": lo, "min_size": m, "dilate": d,
+                                 "dice": round(mean_dice, 4), "f2": round(f2, 4),
+                                 "tp": tp, "fp": fp, "fn": fn, "final": round(final, 4)})
+                    if best is None or final > best[0]:
+                        best = (final, t, m, d, lo)
 
-    print(f"\nbest: --threshold {best[1]} --min-size {best[2]} --dilate {best[3]}"
+    tail = f" --low {best[4]}" if best[4] is not None else ""
+    print(f"\nbest: --threshold {best[1]} --min-size {best[2]} --dilate {best[3]}{tail}"
           f"  (final score {best[0]:.4f})")
     return best, rows
 
@@ -257,6 +276,8 @@ def main():
     ap.add_argument("--out", default=str(REPO / "predicted_masks"))
     ap.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
     ap.add_argument("--min-size", type=int, default=DEFAULT_MIN_SIZE)
+    ap.add_argument("--low", type=float, default=None,
+                    help="Hysteresis floor: grow seeds into connected pixels above this")
     ap.add_argument("--dilate", type=int, default=DEFAULT_DILATE,
                     help="Grow predicted voids by this radius, in pixels")
     ap.add_argument("--tune", action="store_true", help="Sweep threshold/min-size on the val split")
@@ -288,9 +309,10 @@ def main():
         if args.limit:
             df = df.head(args.limit)
         tune(nets, df, device,
-             thresholds=[0.2, 0.3, 0.4, 0.5],
+             thresholds=[0.3, 0.4, 0.5],
              min_sizes=[2, 4],
-             dilations=[0, 1, 2, 3],
+             dilations=[0],
+             lows=[None, 0.05, 0.1, 0.2],
              tta=args.tta)
         return
 
@@ -303,7 +325,7 @@ def main():
         df = df.head(args.limit)
 
     write_masks(nets, df, args.out, device, args.threshold, args.min_size,
-                args.dilate, args.tta)
+                args.dilate, args.tta, args.low)
 
 
 def demo():
