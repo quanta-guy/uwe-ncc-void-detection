@@ -13,3 +13,4 @@ data/
 evaluation.py
 solution2/*.log
 solution3/void_index.csv
+solution3/micrograph_stats.csv

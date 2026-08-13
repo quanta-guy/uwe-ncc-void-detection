@@ -98,6 +98,8 @@ def main():
     ap.add_argument("--base", type=int, default=32)
     ap.add_argument("--depth", type=int, default=4)
     ap.add_argument("--void-boost", type=float, default=3.0)
+    ap.add_argument("--val-every", type=int, default=3,
+                    help="Validate every N epochs; single-image validation is not free")
     ap.add_argument("--target-um", type=float, default=CANONICAL_UM_PER_PX)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--out", default=None)
@@ -175,7 +177,16 @@ def main():
         # With no held-out fold there is nothing to select on, so the last
         # epoch is the checkpoint - picking a "best" would be selecting on
         # training data.
-        dice = validate(net, val_loader, device) if len(va) else float("nan")
+        # Validation is single-image on full resampled frames, so it is not
+        # free. Running it every epoch on a 30-epoch schedule costs more than
+        # it informs; --val-every 3 keeps the best-checkpoint signal while
+        # returning the time to training.
+        due = (epoch + 1) % args.val_every == 0 or epoch == args.epochs - 1
+        dice = validate(net, val_loader, device) if (len(va) and due) else float("nan")
+        if not due and len(va):
+            print(f"epoch {epoch + 1:3d}/{args.epochs}  loss {total / max(n, 1):.4f}"
+                  f"  {time.time() - t0:5.1f}s")
+            continue
         flag = ""
         if len(va) == 0:
             best = dice

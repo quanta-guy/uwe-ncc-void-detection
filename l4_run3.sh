@@ -68,7 +68,7 @@ run "$PY" solution3/train3.py --demo || exit 1
 say "FOLDS 0-4  ($EPOCHS epochs x $STEPS steps, canonical 0.57 um/px)"
 for f in 0 1 2 3 4; do
   [ -f "solution3/runs/s3_unet_f${f}_s0.pt" ] || run "$PY" solution3/train3.py \
-      --epochs "$EPOCHS" --steps "$STEPS" --workers "$W" --fold "$f" --seed 0 \
+      --epochs "$EPOCHS" --steps "$STEPS" --workers "$W" --fold "$f" --seed 0 --val-every 3 \
       --out "solution3/runs/s3_unet_f${f}_s0.pt"
 done
 

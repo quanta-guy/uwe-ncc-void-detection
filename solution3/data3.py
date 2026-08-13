@@ -88,13 +88,26 @@ def resample(img, mask, um_per_px, target=CANONICAL_UM_PER_PX):
 # -----------------------------
 # BALANCED GROUP FOLDS
 # -----------------------------
-def _micrograph_stats(df):
+_STATS_CACHE = Path(__file__).resolve().parent / "micrograph_stats.csv"
+
+
+def _micrograph_stats(df, cache=_STATS_CACHE):
     """Per-micrograph tile count, void count and failing count.
 
     Computed on ORIGINALS only - the augmented copies carry the same defects,
     so counting them would weight each micrograph by how many copies happen to
     exist rather than by what it contains.
+
+    Cached to disk. This reads 1550 masks and runs compute_max_severity on
+    every one of them - convex hulls and KD-trees - which is minutes of CPU.
+    Every training run needs the same answer to build the same folds, so
+    without the cache a five-fold sweep pays for it five times over while the
+    GPU sits idle.
     """
+    if cache and Path(cache).exists():
+        d = pd.read_csv(cache).set_index("group")
+        return {g: dict(r) for g, r in d.to_dict("index").items()}
+
     orig = df[~df["stem"].str.contains(_AUG, regex=True)]
     stats = defaultdict(lambda: {"tiles": 0, "void": 0, "fail": 0})
     for _, r in orig.iterrows():
@@ -105,6 +118,11 @@ def _micrograph_stats(df):
             s["void"] += 1
             sev, _ = compute_max_severity(m, r["um_per_pixel"])
             s["fail"] += sev >= SEVERITY_THRESHOLD
+
+    stats = dict(stats)
+    if cache:
+        Path(cache).parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame([{"group": g, **s} for g, s in stats.items()]).to_csv(cache, index=False)
     return stats
 
 
