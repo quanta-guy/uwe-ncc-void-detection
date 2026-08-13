@@ -63,7 +63,63 @@ under `np.rot90` so labels never interpolate.
 **Tuning happens against the real score, not a proxy.** `predict.py --tune`
 imports `dice_void`, `compute_max_severity` and `compute_f2` from
 `evaluation.py` and reports `F2 * min(1, Dice/0.8)` directly. Nothing is
-re-derived, so a local win is a real win.
+re-derived, so a local win is a real win — and if NCC changes the rules, we
+inherit the change by pulling rather than having to notice it.
+
+## The scoring rules, as verified against the code
+
+Probed with synthetic masks, not read off the slides. `evaluation.py` is
+unchanged from `b698af7`, the commit the challenge shipped with.
+
+**Defect grouping.** Void regions are 8-connected (`connectivity=2`), so
+diagonal touching is one void. Distance between two voids is the minimum
+**edge-to-edge** pixel distance, not centre-to-centre. Merging is strictly
+`< 40 µm`: at 39 µm they merge, at exactly 40 µm they do not.
+
+The slide's three cases are one single-linkage rule producing groups of size
+1, 2 and 3+. All three verified:
+
+| case | setup | result |
+|---|---|---|
+| single defect | one void, r=12 | severity 34.5 → FAIL (r=4 → 11.5 → pass) |
+| two within 40 µm | gap 30 µm / 50 µm | 1 group / 2 groups |
+| any pair within 40 µm | D₁₂=30, D₂₃=30, **D₁₃=68** | still **1 group**, 30.1 → FAIL |
+
+The third case is the one an implementation would realistically get wrong.
+Three voids whose end pair is 68 µm apart still form one defect because each
+is within 40 µm of its neighbour. Individually all three pass at 11.5; chained
+they fail at 30.1.
+
+**Severity.**
+
+```
+severity = Σ(length_i) + 0.5 * sqrt( Σ area_i )       per group
+image severity = max over groups          (max, not sum)
+```
+
+- `length` is the straight-line distance between the two farthest pixels of
+  one void. Verified on an L-shape: 69.3 straight, not 98.0 along the shape.
+- The 0.5 multiplies the **root of the summed area**, not the sum of roots.
+  Two 16 px blobs give 11.31 (`0.5*sqrt(32)`), not 16.49.
+
+**Pass/fail.** `gt_pass = severity < 25`, so severity of exactly 25.0 is a
+**FAIL**. Probed at 24.99 → pass, 25.00 → FAIL. This matches the "Your Task"
+slide's `Pass, if < 25 µm` exactly; the other slide's prose "FAIL if severity
+> 25" is informal, not a real inconsistency.
+
+**Classification.** Positive class is FAIL. `F2 = 5TP / (5TP + 4FN + FP)`. At
+9 TP, one missed failure scores 0.9184 against 0.9783 for one false alarm — a
+miss really does cost ~4x a false alarm.
+
+**Edge cases judging applies to us.** A missing prediction file is scored as
+"predicted no voids", not skipped. A prediction with more than 1500 void
+regions is unscorable and becomes an automatic FAIL. Only a missing *ground
+truth* mask is skipped.
+
+**One genuine inconsistency in the materials.** The slide panel captions read
+`Σ(Lᵢ + (Aᵢ)^½)` while the "Your Task" table reads `L_total + 0.5*√A_total`.
+Those are different formulas. The code implements the table version, which is
+what judging runs.
 
 **The threshold is a knob because F2 is asymmetric.** A missed failure costs 4x
 a false alarm, so the score-optimal void threshold is below the 0.5 an argmax
