@@ -49,6 +49,9 @@ cd "$WORK" || exit 1
 W=$(( $(nproc) > 8 ? 8 : $(nproc) ))
 mkdir -p runs
 
+say "PREFLIGHT"
+run "$PY" src/preflight.py      || { echo "environment incomplete - stopping before the long runs" | tee -a "$LOG"; exit 1; }
+
 say "SMOKE"
 run "$PY" src/model.py          || exit 1
 run "$PY" src/train.py --demo   || exit 1
