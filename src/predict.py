@@ -53,7 +53,7 @@ def load_nets(ckpt_paths, device):
     nets = []
     for path in ckpt_paths:
         ckpt = torch.load(path, map_location=device)
-        net = UNet(base=ckpt.get("base", 32)).to(device)
+        net = UNet(base=ckpt.get("base", 32), depth=ckpt.get("depth", 4)).to(device)
         net.load_state_dict(ckpt["model"])
         net.eval()
         nets.append(net)

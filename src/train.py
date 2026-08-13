@@ -73,6 +73,9 @@ def main():
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--base", type=int, default=32, help="U-Net width")
+    ap.add_argument("--depth", type=int, default=4,
+                    help="Downsampling stages. At 4, a median 15px void is "
+                         "sub-pixel at the bottleneck; 3 keeps twice the detail")
     ap.add_argument("--out", default=str(REPO / "runs" / "unet.pt"))
     ap.add_argument("--fold", type=int, default=0, help="Which micrograph slice to hold out (0-4)")
     ap.add_argument("--limit", type=int, default=0, help="Smoke test: use N training images")
@@ -97,7 +100,7 @@ def main():
                               shuffle=True, drop_last=True, **common)
     val_loader = DataLoader(Micrographs(val_df), batch_size=args.batch_size, **common)
 
-    net = UNet(base=args.base).to(device)
+    net = UNet(base=args.base, depth=args.depth).to(device)
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs * max(1, len(train_loader)))
     scaler = torch.amp.GradScaler(device.type, enabled=device.type == "cuda")
@@ -130,7 +133,8 @@ def main():
         if dice > best:
             best = dice
             torch.save({"model": net.state_dict(), "base": args.base,
-                        "val_dice": dice, "fold": args.fold}, args.out)
+                        "depth": args.depth, "val_dice": dice,
+                        "fold": args.fold}, args.out)
             flag = "  <- saved"
         print(f"epoch {epoch:3d}  loss {running / max(1, len(train_loader)):.4f}  "
               f"val_dice_void {dice:.4f}  {time.time() - started:.0f}s{flag}")
