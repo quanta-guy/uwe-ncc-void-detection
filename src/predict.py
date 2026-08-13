@@ -228,7 +228,7 @@ def _sweep(probs, bases, gts, ums, thresholds, min_sizes, dilations):
 
     print(f"\n{'thresh':>7} {'min_size':>9} {'dilate':>7} {'Dice':>7} {'F2':>7} "
           f"{'TP':>4} {'FP':>4} {'FN':>4} {'FINAL':>7}")
-    best = None
+    best, rows = None, []
     for t in thresholds:
         for m in min_sizes:
             for d in dilations:
@@ -237,12 +237,15 @@ def _sweep(probs, bases, gts, ums, thresholds, min_sizes, dilations):
                 final, f2, tp, fp, fn = _score_at(sevs, facts, mean_dice, bool(dices))
                 print(f"{t:7.2f} {m:9d} {d:7d} {mean_dice:7.4f} {f2:7.4f} "
                       f"{tp:4d} {fp:4d} {fn:4d} {final:7.4f}")
+                rows.append({"threshold": t, "min_size": m, "dilate": d,
+                             "dice": round(mean_dice, 4), "f2": round(f2, 4),
+                             "tp": tp, "fp": fp, "fn": fn, "final": round(final, 4)})
                 if best is None or final > best[0]:
                     best = (final, t, m, d)
 
     print(f"\nbest: --threshold {best[1]} --min-size {best[2]} --dilate {best[3]}"
           f"  (final score {best[0]:.4f})")
-    return best
+    return best, rows
 
 
 def main():
