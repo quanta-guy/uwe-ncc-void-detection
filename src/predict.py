@@ -36,7 +36,7 @@ from evaluation import (  # noqa: E402  - the judge's own scoring code, reused a
     compute_max_severity,
     dice_void,
 )
-from model import UNet  # noqa: E402
+from model import build  # noqa: E402
 
 DEFAULT_THRESHOLD = 0.5
 DEFAULT_MIN_SIZE = 10
@@ -53,7 +53,8 @@ def load_nets(ckpt_paths, device):
     nets = []
     for path in ckpt_paths:
         ckpt = torch.load(path, map_location=device)
-        net = UNet(base=ckpt.get("base", 32), depth=ckpt.get("depth", 4)).to(device)
+        net, _ = build(ckpt.get("arch", "unet"), ckpt.get("base", 32), ckpt.get("depth", 4))
+        net = net.to(device)
         net.load_state_dict(ckpt["model"])
         net.eval()
         nets.append(net)

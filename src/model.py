@@ -63,6 +63,59 @@ class UNet(nn.Module):
         return self.head(x)
 
 
+#: Architectures for the comparison. Each is (smp class, encoder), except
+#: "unet" which is the scratch model above. ImageNet-pretrained encoders are
+#: the point of the exercise: if none of them clears the Dice gate either,
+#: the ceiling is in the labels rather than the model.
+SMP_ARCHS = {
+    "unet_r34":     ("Unet", "resnet34"),        # pretrained encoder, same decoder shape
+    "unetpp_r34":   ("UnetPlusPlus", "resnet34"),  # nested skips, aimed at fine detail
+    "unet_effb0":   ("Unet", "efficientnet-b0"),   # different inductive bias, lighter
+    "fpn_r34":      ("FPN", "resnet34"),           # multi-scale head
+}
+
+# ImageNet encoders were trained on normalised input. Feeding them raw [0,1]
+# throws away the pretraining that is the entire reason to use them.
+IMAGENET_MEAN = (0.485, 0.456, 0.406)
+IMAGENET_STD = (0.229, 0.224, 0.225)
+
+
+class _Normalised(nn.Module):
+    """Applies ImageNet statistics before the wrapped network sees the input.
+
+    Kept inside the module on purpose: normalisation that lives in the
+    training script is normalisation inference forgets, and a pretrained
+    encoder fed raw [0,1] silently throws away the weights it was chosen for.
+    As buffers these travel in the state dict, so a checkpoint is self-contained.
+    """
+
+    def __init__(self, net, mean, std):
+        super().__init__()
+        self.net = net
+        self.register_buffer("mean", torch.tensor(mean).view(1, -1, 1, 1))
+        self.register_buffer("std", torch.tensor(std).view(1, -1, 1, 1))
+
+    def forward(self, x):
+        return self.net((x - self.mean) / self.std)
+
+
+def build(arch="unet", base=32, depth=4):
+    """The scratch U-Net, or a named segmentation_models_pytorch variant."""
+    if arch == "unet":
+        return UNet(base=base, depth=depth), False
+
+    import segmentation_models_pytorch as smp
+
+    cls, encoder = SMP_ARCHS[arch]
+    net = getattr(smp, cls)(
+        encoder_name=encoder,
+        encoder_weights="imagenet",
+        in_channels=N_CHANNELS,
+        classes=N_CLASSES,
+    )
+    return _Normalised(net, IMAGENET_MEAN, IMAGENET_STD), True
+
+
 def demo():
     net = UNet()
     y = net(torch.zeros(2, N_CHANNELS, 256, 256))

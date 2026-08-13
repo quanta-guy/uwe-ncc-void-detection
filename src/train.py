@@ -18,7 +18,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from data import VOID_CLASS, Micrographs, index_training
-from model import UNet
+from model import SMP_ARCHS, build
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -72,6 +72,8 @@ def main():
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--arch", default="unet", choices=["unet", *SMP_ARCHS],
+                    help="Scratch U-Net, or an ImageNet-pretrained variant")
     ap.add_argument("--base", type=int, default=32, help="U-Net width")
     ap.add_argument("--depth", type=int, default=4,
                     help="Downsampling stages. At 4, a median 15px void is "
@@ -100,7 +102,10 @@ def main():
                               shuffle=True, drop_last=True, **common)
     val_loader = DataLoader(Micrographs(val_df), batch_size=args.batch_size, **common)
 
-    net = UNet(base=args.base, depth=args.depth).to(device)
+    net, pretrained = build(args.arch, args.base, args.depth)
+    net = net.to(device)
+    print(f'arch: {args.arch}  params: {sum(p.numel() for p in net.parameters())/1e6:.2f}M'
+          f"{'  (imagenet-normalised)' if pretrained else ''}")
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs * max(1, len(train_loader)))
     scaler = torch.amp.GradScaler(device.type, enabled=device.type == "cuda")
@@ -133,7 +138,7 @@ def main():
         if dice > best:
             best = dice
             torch.save({"model": net.state_dict(), "base": args.base,
-                        "depth": args.depth, "val_dice": dice,
+                        "depth": args.depth, "arch": args.arch, "val_dice": dice,
                         "fold": args.fold}, args.out)
             flag = "  <- saved"
         print(f"epoch {epoch:3d}  loss {running / max(1, len(train_loader)):.4f}  "
