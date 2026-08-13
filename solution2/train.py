@@ -41,6 +41,7 @@ sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from data import N_CLASSES, VOID_CLASS, index_training  # noqa: E402
+from micronet import build_micronet  # noqa: E402
 from model import build  # noqa: E402
 from pipeline import Micrographs2, build_transforms  # noqa: E402
 
@@ -93,12 +94,22 @@ def validate(net, loader, device, threshold=0.5):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--norm", choices=["single", "imagenet"], default="single")
+    ap.add_argument("--arch", default="unet",
+                    help="'unet' is the scratch model; anything else is an smp class (Unet, FPN, ...)")
+    ap.add_argument("--encoder", default="resnet50", help="smp encoder, when --arch is an smp class")
+    ap.add_argument("--weights", default="micronet",
+                    choices=["micronet", "image-micronet", "imagenet", "none"],
+                    help="Encoder pretraining, when --arch is an smp class")
+    ap.add_argument("--norm", choices=["single", "imagenet", "micronet"], default=None,
+                    help="Defaults to the statistics the encoder was pretrained under")
     ap.add_argument("--aug", choices=["full", "thin"], default="full",
                     help="'thin' is the original resize/flip/rot90/brightness stack")
     ap.add_argument("--epochs", type=int, default=20)
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--lr", type=float, default=3e-4)
+    ap.add_argument("--encoder-lr-scale", type=float, default=0.1,
+                    help="Pretrained encoder lr as a fraction of --lr. 1.0 reproduces "
+                         "the single-lr run that showed no benefit from pretraining.")
     ap.add_argument("--void-weight", type=float, default=5.0)
     ap.add_argument("--base", type=int, default=32)
     ap.add_argument("--depth", type=int, default=4)
@@ -112,7 +123,15 @@ def main():
     if args.demo:
         return demo()
 
-    out = Path(args.out or OUT / f"alb_unet_f{args.fold}.pt")
+    # Normalisation follows the encoder unless overridden. Scoring reads it back
+    # off the checkpoint, so a model can never be evaluated under statistics it
+    # was not trained with - the classic silent accuracy leak here.
+    if args.norm is None:
+        args.norm = "single" if args.arch == "unet" else {
+            "micronet": "micronet", "image-micronet": "micronet"}.get(args.weights, "imagenet")
+
+    tag = "unet" if args.arch == "unet" else f"{args.arch.lower()}_{args.encoder}_{args.weights}"
+    out = Path(args.out or OUT / f"alb_{tag}_f{args.fold}.pt")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     df = index_training(args.fold)
@@ -129,14 +148,50 @@ def main():
                               shuffle=True, drop_last=True, **common)
     val_loader = DataLoader(Micrographs2(va, val_t), batch_size=args.batch_size, **common)
 
-    net, pretrained = build("unet", args.base, args.depth, chroma=False)
-    assert not pretrained, "scratch U-Net only - an smp model would normalise twice"
+    if args.arch == "unet":
+        # build() returns a bare U-Net with no internal normalisation, so
+        # A.Normalize in the Compose is the only one applied.
+        net, pretrained = build("unet", args.base, args.depth, chroma=False)
+        assert not pretrained, "scratch path must not return a wrapped smp model"
+        desc = f"unet(scratch) base={args.base} depth={args.depth}"
+    elif args.weights in ("micronet", "image-micronet"):
+        net = build_micronet(args.arch, args.encoder, args.weights)
+        desc = f"{args.arch}/{args.encoder} <- {args.weights}"
+    else:
+        # Built directly rather than through build(), which would wrap it in
+        # _InputAdapter and normalise a second time on top of the Compose.
+        net = getattr(smp, args.arch)(
+            encoder_name=args.encoder,
+            encoder_weights=None if args.weights == "none" else args.weights,
+            in_channels=3, classes=N_CLASSES)
+        desc = f"{args.arch}/{args.encoder} <- {args.weights}"
+
     net = net.to(device)
-    print(f"unet base={args.base} depth={args.depth} norm={args.norm} aug={args.aug}  "
+    print(f"{desc} norm={args.norm} aug={args.aug}  "
           f"{sum(p.numel() for p in net.parameters()) / 1e6:.2f}M params")
 
     criterion = BCEDiceLoss(args.void_weight).to(device)
-    opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
+
+    # A pretrained encoder must not be updated as hard as a randomly
+    # initialised decoder. At one shared learning rate the decoder's early
+    # gradients - large, because it starts from noise - are applied to encoder
+    # weights that already know something, and the pretraining is destroyed in
+    # the first epochs. The result trains fine and scores like a scratch model,
+    # which is exactly what MicroNet did at scale 1.0.
+    if args.arch != "unet" and args.weights != "none" and args.encoder_lr_scale != 1.0:
+        enc = list(net.encoder.parameters())
+        enc_ids = {id(p) for p in enc}
+        dec = [p for p in net.parameters() if id(p) not in enc_ids]
+        opt = torch.optim.AdamW(
+            [{"params": enc, "lr": args.lr * args.encoder_lr_scale},
+             {"params": dec, "lr": args.lr}], weight_decay=1e-4)
+        print(f"  encoder lr {args.lr * args.encoder_lr_scale:.1e} "
+              f"({len(enc)} tensors), decoder lr {args.lr:.1e} ({len(dec)} tensors)")
+    else:
+        opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
+
+    # CosineAnnealingLR anneals each param group from its own initial lr, so the
+    # ratio between encoder and decoder is preserved for the whole schedule.
     sched = CosineAnnealingLR(opt, T_max=args.epochs * len(train_loader))
     scaler = torch.amp.GradScaler(device.type, enabled=device.type == "cuda")
 
@@ -162,8 +217,10 @@ def main():
             # Everything evaluate.py needs to rebuild the model and match the
             # preprocessing. Reading these from the checkpoint rather than the
             # command line makes it impossible to score under the wrong norm.
-            torch.save({"model": net.state_dict(), "arch": "unet", "base": args.base,
+            torch.save({"model": net.state_dict(), "arch": args.arch, "base": args.base,
                         "depth": args.depth, "chroma": False, "norm": args.norm,
+                        "encoder": args.encoder, "weights": args.weights,
+                        "encoder_lr_scale": args.encoder_lr_scale, "epochs": args.epochs,
                         "aug": args.aug, "fold": args.fold, "val_dice": dice,
                         "classes": N_CLASSES, "pipeline": "albumentations-v2",
                         "size": 256}, out)

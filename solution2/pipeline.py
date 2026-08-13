@@ -60,7 +60,17 @@ SIZE = 256
 NORMS = {
     "single": ((0.485,), (0.229,)),
     "imagenet": ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+    # MicroNet's own channel statistics, from NASA's pretrained-microscopy-models.
+    # A MicroNet encoder fed ImageNet statistics is normalised to a distribution
+    # it never saw, which throws away part of the pretraining being tested.
+    "micronet": ((0.4723, 0.4599, 0.4468), (0.1684, 0.1575, 0.1675)),
 }
+
+# albumentations runs on cv2, which starts its own thread pool by default. In a
+# DataLoader with N workers that is N processes each trying to use every core,
+# and the contention makes more workers slower rather than faster. One thread
+# per worker, parallelism from the workers themselves.
+cv2.setNumThreads(0)
 
 
 def build_transforms(norm="single", size=SIZE, aug="full"):
