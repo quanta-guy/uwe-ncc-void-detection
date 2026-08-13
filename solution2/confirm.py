@@ -43,21 +43,34 @@ LUT = np.array([[45, 45, 60], [205, 200, 190], [225, 55, 55]], np.uint8)
 
 
 def load_family(runs, pattern, device):
-    """The five fold models of one solution, indexed by the fold they held out."""
+    """The five fold models of one solution, indexed by the fold they held out.
+
+    Handles both families. Solution 1 checkpoints name the scratch U-Net and
+    carry no `norm`; solution 2's name an smp class and an encoder. Rebuilding
+    an smp model here uses encoder_weights=None on purpose - the trained
+    weights come from the checkpoint, and re-downloading the pretrained ones
+    would overwrite them with the starting point.
+    """
     nets = {}
     for f in range(VAL_EVERY):
         path = Path(runs) / pattern.format(f=f)
         if not path.exists():
             sys.exit(f"missing {path}")
         ckpt = torch.load(path, map_location=device)
-        net, _ = build(ckpt.get("arch", "unet"), ckpt.get("base", 32),
-                       ckpt.get("depth", 4), ckpt.get("chroma", False))
+        arch = ckpt.get("arch", "unet")
+        if arch == "unet":
+            net, _ = build(arch, ckpt.get("base", 32), ckpt.get("depth", 4),
+                           ckpt.get("chroma", False))
+        else:
+            import segmentation_models_pytorch as smp
+            net = getattr(smp, arch)(encoder_name=ckpt["encoder"], encoder_weights=None,
+                                     in_channels=3, classes=ckpt.get("classes", 3))
         net = net.to(device)
         net.load_state_dict(ckpt["model"])
         net.eval()
         # Solution 2 normalises in its Compose; solution 1 feeds raw [0,1].
-        tf = build_transforms(ckpt["norm"])[1] if "norm" in ckpt else None
-        nets[f] = (net, tf)
+        norm = ckpt.get("norm")
+        nets[f] = (net, build_transforms(norm)[1] if norm else None)
     return nets
 
 

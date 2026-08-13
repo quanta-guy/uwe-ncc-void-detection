@@ -96,7 +96,10 @@ def tile(img_or_mask, label, info, w, band=42, is_image=False):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", nargs="+", required=True,
-                    help="path or path:threshold (default threshold 0.4)")
+                    help="path[+path...][:threshold]. '+' averages checkpoints as one "
+                         "ensemble, which is what actually ships - on the Test set every "
+                         "fold model is usable because none of these micrographs were "
+                         "in training at all.")
     ap.add_argument("--min-size", type=int, default=2)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--out", default=str(OUT))
@@ -105,13 +108,19 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     specs = []
     for c in args.ckpt:
-        path, _, thr = c.rpartition(":")
-        if not path:               # no colon given
-            path, thr = c, "0.4"
-        net, ckpt = load_net(path, device)
-        val_t = build_transforms(ckpt["norm"])[1] if ckpt["norm"] else None
-        specs.append({"name": Path(path).stem, "net": net, "tf": val_t,
-                      "thr": float(thr)})
+        paths, _, thr = c.rpartition(":")
+        if not paths:              # no colon given
+            paths, thr = c, "0.4"
+        members = paths.split("+")
+        nets, ckpts = zip(*[load_net(p, device) for p in members])
+        norms = {k["norm"] for k in ckpts}
+        assert len(norms) == 1, f"cannot ensemble across normalisations: {norms}"
+        norm = norms.pop()
+        name = Path(members[0]).stem
+        if len(members) > 1:
+            name = f"{name.rstrip('01234f_')}_ens{len(members)}"
+        specs.append({"name": name, "nets": list(nets), "thr": float(thr),
+                      "tf": build_transforms(norm)[1] if norm else None})
     print()
 
     df = index_test()
@@ -128,7 +137,7 @@ def main():
         tiles = [tile(img, f"{row['stem']}", None, img.shape[1], is_image=True)]
 
         for s in specs:
-            p = class_prob([s["net"]], s["tf"], img, device)
+            p = class_prob(s["nets"], s["tf"], img, device)
             mask = to_mask(p[VOID_CLASS], (p[1] > p[0]).astype(np.uint8),
                            s["thr"], args.min_size)
             info = anatomy(mask, um)
