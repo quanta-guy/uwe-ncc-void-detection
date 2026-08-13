@@ -68,10 +68,19 @@ class UNet(nn.Module):
 #: the point of the exercise: if none of them clears the Dice gate either,
 #: the ceiling is in the labels rather than the model.
 SMP_ARCHS = {
-    "unet_r34":     ("Unet", "resnet34"),        # pretrained encoder, same decoder shape
+    "unet_r34":     ("Unet", "resnet34"),          # pretrained encoder, same decoder shape
     "unetpp_r34":   ("UnetPlusPlus", "resnet34"),  # nested skips, aimed at fine detail
     "unet_effb0":   ("Unet", "efficientnet-b0"),   # different inductive bias, lighter
     "fpn_r34":      ("FPN", "resnet34"),           # multi-scale head
+    # Positive control, expected to lose. DeepLabV3+ predicts at output stride
+    # 4 and bilinearly upsamples 4x, so a 15px median void is ~4px when its
+    # boundary is decided and interpolated afterwards - and 1px of boundary
+    # drift on a void that size is a ~13% Dice hit. Its ASPP is built for
+    # large-receptive-field scene parsing, the opposite of small high-contrast
+    # blobs. If everything ties at 0.744 AND this one drops, the comparison
+    # demonstrably resolves architecture differences, so the tie is a real
+    # ceiling rather than a blunt instrument.
+    "deeplabv3p_r34": ("DeepLabV3Plus", "resnet34"),
 }
 
 # ImageNet encoders were trained on normalised input. Feeding them raw [0,1]

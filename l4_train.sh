@@ -69,7 +69,7 @@ say "DEPTH 3  (median void is 15px; at depth 4 that is sub-pixel at the bottlene
     --depth 3 --fold 0 --out runs/unet_d3.pt
 
 say "ARCHITECTURES  (prediction on record: all land within ~0.02 Dice of 0.744)"
-for arch in unet_r34 unetpp_r34 unet_effb0 fpn_r34; do
+for arch in unet_r34 unetpp_r34 unet_effb0 fpn_r34 deeplabv3p_r34; do
   [ -f "runs/arch_$arch.pt" ] && continue
   run "$PY" src/train.py --arch "$arch" --epochs 20 --workers "$W" \
       --fold 0 --out "runs/arch_$arch.pt" \
