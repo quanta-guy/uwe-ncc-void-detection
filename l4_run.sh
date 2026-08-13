@@ -36,7 +36,11 @@ VENV="$ROOT/venv"
 PY="$VENV/bin/python"
 run "$PY" -m pip install -q --upgrade pip
 run "$PY" -m pip install -q numpy scipy pandas pillow scikit-image
-run "$PY" -m pip install -q torch --index-url https://download.pytorch.org/whl/cu124
+# Plain PyPI wheels already bundle CUDA 12.x and cover a far wider Python
+# range than the pinned cu124 index, which only carries torch 2.4-2.6 and
+# fails with ResolutionImpossible on newer interpreters.
+run "$PY" -m pip install -q torch || run "$PY" -m pip install -q torch --index-url https://download.pytorch.org/whl/cu121
+"$PY" -c "import torch" 2>/dev/null || { echo "TORCH INSTALL FAILED - python is $("$PY" -V)" | tee -a "$LOG"; exit 1; }
 run "$PY" -c "import torch;print('torch',torch.__version__,'cuda',torch.cuda.is_available(),torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"
 
 cd "$WORK" || exit 1
