@@ -38,11 +38,14 @@ from data import index_training  # noqa: E402
 from predict import load_nets, tune  # noqa: E402
 
 SRC = REPO / "src"
-THRESHOLDS = [0.2, 0.3, 0.4, 0.5, 0.6]
-MIN_SIZES = [2, 4, 10]
+# Trimmed after measurement: dilation, hysteresis and the active contour all
+# lose on score, so they are sampled rather than swept exhaustively. The
+# threshold is the knob that actually moves the result.
+THRESHOLDS = [0.3, 0.4, 0.5]
+MIN_SIZES = [2, 4]
 DILATIONS = [0]
-LOWS = [None, 0.05, 0.1]
-GACS = [0, 5, 15]
+LOWS = [None, 0.05]
+GACS = [0, 5]
 
 
 def discover(runs_dir):
@@ -154,6 +157,7 @@ def main():
         if args.panels:
             ck = [str(c) for c in ckpts]
             for script, sub, extra in [("overlay.py", "panels", ["--split", "val",
+                                                                 "--fold", str(fold),
                                                                  "--limit", str(args.panels)]),
                                        ("report.py", "", ["--split", "test"])]:
                 dest = out / sub if sub else out

@@ -62,6 +62,8 @@ def main():
     ap.add_argument("--threshold", type=float, default=0.3)
     ap.add_argument("--min-size", type=int, default=2)
     ap.add_argument("--limit", type=int, default=24)
+    ap.add_argument("--fold", type=int, default=0,
+                    help="Which fold's held-out images to show; must match the model's")
     args = ap.parse_args()
 
     import torch
@@ -73,7 +75,9 @@ def main():
     for stale in out_dir.glob("*.png"):
         stale.unlink()
 
-    df = index_test() if args.split == "test" else index_training().query("is_val")
+    # The fold must match the checkpoint, or a fold model is shown images it
+    # trained on and the panels prove nothing.
+    df = index_test() if args.split == "test" else index_training(args.fold).query("is_val")
 
     rows = []
     for _, r in df.iterrows():
