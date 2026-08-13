@@ -3,14 +3,16 @@
     python src/bench.py                    # every runs/*.pt, plus the fold ensemble
     python src/bench.py --ckpt runs/arch_unetpp_r34.pt
 
-Each model gets results/<name>/ containing:
+Each run gets results/<run_id>/, and each model a folder inside it:
 
     sweep.csv              the full threshold x min_size x dilate grid
     best.txt               the winning setting and its score
     panels/                overlay panels, worst disagreements first
     inspection_queue.csv   the accept/review/reject report on the Test set
 
-and every model lands one row in results/comparison.csv.
+plus run.json (host, GPU, git commit, grid) and comparison.csv across
+all models. Runs are never overwritten - a later run with different
+checkpoints or a different grid is a different folder.
 
 Training happens wherever there is a GPU; this runs on the laptop, because
 scoring is CPU-bound severity geometry rather than matrix multiplication, and
@@ -20,8 +22,11 @@ about it.
 
 import argparse
 import csv
+import json
+import platform
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import torch
@@ -63,6 +68,8 @@ def main():
     ap.add_argument("--out", default=str(REPO / "results"))
     ap.add_argument("--panels", type=int, default=12, help="Overlay panels per model, 0 to skip")
     ap.add_argument("--limit", type=int, default=0, help="Val images per model, for a quick pass")
+    ap.add_argument("--run-id", default=None,
+                    help="Folder name under results/; defaults to a UTC timestamp")
     args = ap.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -70,20 +77,51 @@ def main():
     if not jobs:
         sys.exit(f"no checkpoints in {args.runs}")
 
-    print(f"{len(jobs)} model(s) to evaluate on {device}\n")
+    # Every evaluation gets its own folder. Runs differ by checkpoint set, grid
+    # and code version, so overwriting one with the next loses the comparison
+    # that made it worth running.
+    run_id = args.run_id or datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    root = Path(args.out) / run_id
+    root.mkdir(parents=True, exist_ok=True)
+
+    def git(*a):
+        try:
+            return subprocess.run(["git", *a], cwd=REPO, capture_output=True,
+                                  text=True, check=True).stdout.strip()
+        except Exception:
+            return "unknown"
+
+    meta = {
+        "run_id": run_id,
+        "started_utc": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "host": platform.node(),
+        "device": str(device),
+        "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+        "torch": torch.__version__,
+        "git_commit": git("rev-parse", "--short", "HEAD"),
+        "git_dirty": bool(git("status", "--porcelain")),
+        "grid": {"thresholds": THRESHOLDS, "min_sizes": MIN_SIZES,
+                 "dilations": DILATIONS, "lows": LOWS, "gacs": GACS},
+        "val_images_per_model": args.limit or "all",
+        "models": [n for n, _ in jobs],
+    }
+    (root / "run.json").write_text(json.dumps(meta, indent=2))
+
+    print(f"run {run_id}: {len(jobs)} model(s) on {device}")
+    print(f"  -> {root}\n")
     summary = []
 
     for name, ckpts in jobs:
         print(f"\n{'=' * 70}\n{name}\n{'=' * 70}")
-        out = Path(args.out) / name
+        out = root / name
         (out / "panels").mkdir(parents=True, exist_ok=True)
 
-        meta = describe(ckpts[0])
+        info = describe(ckpts[0])
         nets = load_nets([str(c) for c in ckpts], device)
 
         # Fold models must be graded on the fold they held out, or the score is
         # a model marking its own homework. Anything else uses fold 0.
-        fold = meta["fold"] if len(ckpts) == 1 else 0
+        fold = info["fold"] if len(ckpts) == 1 else 0
         df = index_training(fold).query("is_val")
         if args.limit:
             df = df.head(args.limit)
@@ -100,7 +138,7 @@ def main():
         (out / "best.txt").write_text(
             f"model            {name}\n"
             f"checkpoints      {', '.join(c.name for c in ckpts)}\n"
-            f"arch             {meta['arch']}  depth {meta['depth']}  base {meta['base']}\n"
+            f"arch             {info['arch']}  depth {info['depth']}  base {info['base']}\n"
             f"graded on fold   {fold}  ({len(df)} held-out images)\n"
             f"best setting     --threshold {t} --min-size {m} --dilate {d}\n"
             f"Dice_void        {top['dice']}\n"
@@ -108,7 +146,7 @@ def main():
             f"final score      {final:.4f}\n"
             f"TP/FP/FN         {top['tp']}/{top['fp']}/{top['fn']}\n")
 
-        summary.append({"model": name, **meta, "graded_on_fold": fold,
+        summary.append({"model": name, **info, "graded_on_fold": fold,
                         "threshold": t, "min_size": m, "dilate": d, "low": lo, "gac": g,
                         "dice": top["dice"], "f2": top["f2"], "final": round(final, 4),
                         "tp": top["tp"], "fp": top["fp"], "fn": top["fn"]})
@@ -131,7 +169,7 @@ def main():
                 nested.rmdir()
 
     summary.sort(key=lambda r: -r["final"])
-    comp = Path(args.out) / "comparison.csv"
+    comp = root / "comparison.csv"
     with open(comp, "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(summary[0]))
         w.writeheader()
@@ -146,7 +184,16 @@ def main():
     spread = summary[0]["dice"] - summary[-1]["dice"]
     print(f"\nDice spread across {len(summary)} models: {spread:.4f}")
     print("A small spread across architectures points at the labels, not the model.")
-    print(f"\nper-model directories: {Path(args.out)}\ncomparison: {comp}")
+
+    (root / "run.json").write_text(json.dumps(
+        {**meta,
+         "finished_utc": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+         "dice_spread": round(spread, 4),
+         "ranking": [{k: r[k] for k in ("model", "arch", "dice", "f2", "final")}
+                     for r in summary]},
+        indent=2))
+
+    print(f"\nrun {run_id}\nper-model directories: {root}\ncomparison: {comp}")
 
 
 if __name__ == "__main__":

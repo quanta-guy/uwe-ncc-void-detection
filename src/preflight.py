@@ -32,6 +32,7 @@ REQUIRED = [
 OPTIONAL = [
     ("segmentation_models_pytorch", "segmentation_models_pytorch",
      "pretrained architectures - needed to TRAIN and to LOAD arch_* checkpoints"),
+    ("torchvision", "torchvision", "pulled in by smp via timm; must match torch's build"),
 ]
 
 
@@ -63,6 +64,27 @@ def main():
 
     print("\noptional packages")
     check_imports(OPTIONAL, required=False)
+
+    # Installing smp pulls torchvision, and on Windows the default PyPI torch
+    # wheel is CPU-only - so a plain `pip install segmentation_models_pytorch`
+    # can silently replace a CUDA build with a CPU one, or leave torchvision
+    # built against a torch that is no longer installed. Both fail confusingly
+    # much later, so check the pair here.
+    try:
+        import torch
+        import torchvision
+        tv_base = torchvision.__version__.split("+")[0]
+        t_tag = torch.__version__.split("+")[-1] if "+" in torch.__version__ else "cpu"
+        tv_tag = torchvision.__version__.split("+")[-1] if "+" in torchvision.__version__ else "cpu"
+        if t_tag != tv_tag:
+            print(f"\n  [MISMATCH] torch is '{t_tag}' but torchvision is '{tv_tag}'")
+            print(f"            -> pip install torch torchvision --index-url "
+                  f"https://download.pytorch.org/whl/{t_tag}")
+            ok = False
+        else:
+            print(f"\n  [ok]      torch/torchvision builds agree ({t_tag}, torchvision {tv_base})")
+    except ImportError:
+        pass
 
     print("\ngpu")
     try:
