@@ -24,6 +24,7 @@ import numpy as np
 import torch
 from PIL import Image
 from skimage.filters import apply_hysteresis_threshold
+from skimage.segmentation import inverse_gaussian_gradient, morphological_geodesic_active_contour
 from skimage.morphology import binary_dilation, disk, remove_small_objects
 
 REPO = Path(__file__).resolve().parents[1]
@@ -109,8 +110,19 @@ def void_prob(nets, img, device, tta=False):
     return prob[VOID_CLASS].cpu().numpy(), prob[:VOID_CLASS].argmax(dim=0).cpu().numpy().astype(np.uint8)
 
 
+def edge_map(grey):
+    """Edge-stopping function for the active contour: low on edges, high inside.
+
+    Built from the *image*, not the model's probabilities. That is the whole
+    reason to prefer a contour over hysteresis - hysteresis can only grow where
+    the model already suspected a void, so it inherits the model's
+    under-segmentation. A real intensity gradient does not.
+    """
+    return inverse_gaussian_gradient(grey.astype(np.float32) / 255.0, alpha=100, sigma=2.0)
+
+
 def to_mask(p_void, base, threshold=DEFAULT_THRESHOLD, min_size=DEFAULT_MIN_SIZE,
-            dilate=DEFAULT_DILATE, low=None):
+            dilate=DEFAULT_DILATE, low=None, gac=0, edge=None):
     """Threshold, despeckle, optionally dilate, stamp over the base labels.
 
     `dilate` corrects a measured bias: the model recovers only 10-25% of the
@@ -138,6 +150,18 @@ def to_mask(p_void, base, threshold=DEFAULT_THRESHOLD, min_size=DEFAULT_MIN_SIZE
         void = p_void > threshold
     if min_size > 1:
         void = remove_small_objects(void, min_size=min_size)
+
+    # Morphological geodesic active contour: expand the mask (balloon=1) until
+    # it settles on real intensity edges. Runs after despeckling so it does not
+    # inflate noise, and only where a seed already exists - an all-zero mask
+    # stays all-zero rather than growing something out of nothing.
+    if gac and edge is not None and void.any():
+        void = morphological_geodesic_active_contour(
+            edge, num_iter=gac, init_level_set=void.astype(np.int8),
+            smoothing=1, balloon=1).astype(bool)
+        if min_size > 1:
+            void = remove_small_objects(void, min_size=min_size)
+
     if dilate:
         void = binary_dilation(void, disk(dilate))
     mask = base.copy()
@@ -145,12 +169,15 @@ def to_mask(p_void, base, threshold=DEFAULT_THRESHOLD, min_size=DEFAULT_MIN_SIZE
     return mask
 
 
-def write_masks(nets, df, out_dir, device, threshold, min_size, dilate=0, tta=False, low=None):
+def write_masks(nets, df, out_dir, device, threshold, min_size, dilate=0, tta=False,
+                low=None, gac=0):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     for _, row in df.iterrows():
-        p_void, base = void_prob(nets, load_image(row["image"]), device, tta)
-        mask = to_mask(p_void, base, threshold, min_size, dilate, low)
+        img = load_image(row["image"])
+        p_void, base = void_prob(nets, img, device, tta)
+        mask = to_mask(p_void, base, threshold, min_size, dilate, low, gac,
+                       edge_map(img.mean(axis=2).astype(np.uint8)) if gac else None)
         Image.fromarray(mask).save(out_dir / f"{row['stem']}.png")
     print(f"wrote {len(df)} masks to {out_dir}")
 
@@ -202,67 +229,86 @@ def _score_at(sevs, facts, mean_dice, has_dice):
 
 
 def _collect(nets, df, device, tta, into=None):
-    """Cache void probabilities and ground truth for a set of images."""
-    probs, bases, gts, ums = into if into else ([], [], [], [])
+    """Cache void probabilities, ground truth and greyscale for a set of images.
+
+    Greyscale is kept as uint8 rather than a precomputed edge map: 3100 images
+    is 200MB this way against 800MB as float32, and inverse_gaussian_gradient
+    is fast enough to recompute per active-contour setting.
+    """
+    probs, bases, gts, ums, greys = into if into else ([], [], [], [], [])
     for _, row in df.iterrows():
-        p_void, base = void_prob(nets, load_image(row["image"]), device, tta)
+        img = load_image(row["image"])
+        greys.append(img.mean(axis=2).astype(np.uint8))
+        p_void, base = void_prob(nets, img, device, tta)
         probs.append(p_void.astype(np.float16))
         bases.append(base)
         gts.append(load_mask(row["mask"]))
         ums.append(row["um_per_pixel"])
-    return probs, bases, gts, ums
+    return probs, bases, gts, ums, greys
 
 
-def oof(ckpt_dir, device, thresholds, min_sizes, dilations, tta=False):
+def oof(ckpt_dir, device, thresholds, min_sizes, dilations, lows=(None,), gacs=(0,), tta=False):
     """Out-of-fold sweep: every image scored by the one model that never saw it.
 
     The single-split number rests on 6 micrographs and is noisy enough that
     best-epoch selection is partly luck. This covers all 28, once each, with
     no model ever grading its own training data.
     """
-    cached = ([], [], [], [])
+    cached = ([], [], [], [], [])
     for f in range(VAL_EVERY):
         nets = load_nets([str(Path(ckpt_dir) / f"unet_f{f}.pt")], device)
         df = index_training(f).query("is_val")
         print(f"  fold {f}: {len(df)} held-out images")
         _collect(nets, df, device, tta, into=cached)
-    return _sweep(*cached, thresholds, min_sizes, dilations)
+    return _sweep(*cached, thresholds, min_sizes, dilations, lows, gacs)
 
 
-def tune(nets, df, device, thresholds, min_sizes, dilations, lows=(None,), tta=False):
+def tune(nets, df, device, thresholds, min_sizes, dilations, lows=(None,), gacs=(0,), tta=False):
     print(f"caching predictions for {len(df)} val images{' (TTA x8)' if tta else ''}...")
-    probs, bases, gts, ums = _collect(nets, df, device, tta)
-    return _sweep(probs, bases, gts, ums, thresholds, min_sizes, dilations, lows)
+    cached = _collect(nets, df, device, tta)
+    return _sweep(*cached, thresholds, min_sizes, dilations, lows, gacs)
 
 
-def _sweep(probs, bases, gts, ums, thresholds, min_sizes, dilations, lows=(None,)):
+def _sweep(probs, bases, gts, ums, greys, thresholds, min_sizes, dilations,
+           lows=(None,), gacs=(0,)):
     facts = gt_facts(gts, ums)
     print(f"ground truth: {sum(1 for _, n in facts if n)} void-containing, "
           f"{sum(1 for s, _ in facts if s >= SEVERITY_THRESHOLD)} failing")
 
-    print(f"\n{'thresh':>7} {'low':>6} {'min_size':>9} {'dilate':>7} {'Dice':>7} {'F2':>7} "
-          f"{'TP':>4} {'FP':>4} {'FN':>4} {'FINAL':>7}")
+    # Edge maps are shared by every grid point that uses the contour, so build
+    # them once rather than per setting.
+    edges = [edge_map(g) for g in greys] if any(gacs) else None
+
+    print(f"\n{'thresh':>7} {'low':>6} {'gac':>4} {'min_size':>9} {'dilate':>7} "
+          f"{'Dice':>7} {'F2':>7} {'TP':>4} {'FP':>4} {'FN':>4} {'FINAL':>7}")
     best, rows = None, []
     for t in thresholds:
         for lo in lows:
             # A floor at or above the seed level is just a plain threshold.
             if lo is not None and lo >= t:
                 continue
-            for m in min_sizes:
-                for d in dilations:
-                    masks = [to_mask(p.astype(np.float32), b, t, m, d, lo)
-                             for p, b in zip(probs, bases)]
-                    mean_dice, dices, sevs = _measure(masks, gts, ums, facts)
-                    final, f2, tp, fp, fn = _score_at(sevs, facts, mean_dice, bool(dices))
-                    print(f"{t:7.2f} {str(lo):>6} {m:9d} {d:7d} {mean_dice:7.4f} {f2:7.4f} "
-                          f"{tp:4d} {fp:4d} {fn:4d} {final:7.4f}")
-                    rows.append({"threshold": t, "low": lo, "min_size": m, "dilate": d,
-                                 "dice": round(mean_dice, 4), "f2": round(f2, 4),
-                                 "tp": tp, "fp": fp, "fn": fn, "final": round(final, 4)})
-                    if best is None or final > best[0]:
-                        best = (final, t, m, d, lo)
+            for g in gacs:
+                for m in min_sizes:
+                    for d in dilations:
+                        masks = [
+                            to_mask(p.astype(np.float32), b, t, m, d, lo, g,
+                                    edges[i] if edges is not None else None)
+                            for i, (p, b) in enumerate(zip(probs, bases))
+                        ]
+                        mean_dice, dices, sevs = _measure(masks, gts, ums, facts)
+                        final, f2, tp, fp, fn = _score_at(sevs, facts, mean_dice, bool(dices))
+                        print(f"{t:7.2f} {str(lo):>6} {g:4d} {m:9d} {d:7d} "
+                              f"{mean_dice:7.4f} {f2:7.4f} "
+                              f"{tp:4d} {fp:4d} {fn:4d} {final:7.4f}")
+                        rows.append({"threshold": t, "low": lo, "gac": g,
+                                     "min_size": m, "dilate": d,
+                                     "dice": round(mean_dice, 4), "f2": round(f2, 4),
+                                     "tp": tp, "fp": fp, "fn": fn,
+                                     "final": round(final, 4)})
+                        if best is None or final > best[0]:
+                            best = (final, t, m, d, lo, g)
 
-    tail = f" --low {best[4]}" if best[4] is not None else ""
+    tail = (f" --low {best[4]}" if best[4] is not None else "") + (f" --gac {best[5]}" if best[5] else "")
     print(f"\nbest: --threshold {best[1]} --min-size {best[2]} --dilate {best[3]}{tail}"
           f"  (final score {best[0]:.4f})")
     return best, rows
@@ -276,6 +322,8 @@ def main():
     ap.add_argument("--out", default=str(REPO / "predicted_masks"))
     ap.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
     ap.add_argument("--min-size", type=int, default=DEFAULT_MIN_SIZE)
+    ap.add_argument("--gac", type=int, default=0,
+                    help="Active-contour iterations: expand the mask onto real image edges")
     ap.add_argument("--low", type=float, default=None,
                     help="Hysteresis floor: grow seeds into connected pixels above this")
     ap.add_argument("--dilate", type=int, default=DEFAULT_DILATE,
@@ -312,7 +360,8 @@ def main():
              thresholds=[0.3, 0.4, 0.5],
              min_sizes=[2, 4],
              dilations=[0],
-             lows=[None, 0.05, 0.1, 0.2],
+             lows=[None, 0.05, 0.1],
+             gacs=[0, 5, 15],
              tta=args.tta)
         return
 
@@ -325,7 +374,7 @@ def main():
         df = df.head(args.limit)
 
     write_masks(nets, df, args.out, device, args.threshold, args.min_size,
-                args.dilate, args.tta, args.low)
+                args.dilate, args.tta, args.low, args.gac)
 
 
 def demo():

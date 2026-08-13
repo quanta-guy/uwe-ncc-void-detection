@@ -36,7 +36,8 @@ SRC = REPO / "src"
 THRESHOLDS = [0.2, 0.3, 0.4, 0.5, 0.6]
 MIN_SIZES = [2, 4, 10]
 DILATIONS = [0]
-LOWS = [None, 0.05, 0.1, 0.2]
+LOWS = [None, 0.05, 0.1]
+GACS = [0, 5, 15]
 
 
 def discover(runs_dir):
@@ -87,8 +88,8 @@ def main():
         if args.limit:
             df = df.head(args.limit)
 
-        best, rows = tune(nets, df, device, THRESHOLDS, MIN_SIZES, DILATIONS, LOWS)
-        final, t, m, d, lo = best
+        best, rows = tune(nets, df, device, THRESHOLDS, MIN_SIZES, DILATIONS, LOWS, GACS)
+        final, t, m, d, lo, g = best
 
         with open(out / "sweep.csv", "w", newline="") as fh:
             w = csv.DictWriter(fh, fieldnames=list(rows[0]))
@@ -108,7 +109,7 @@ def main():
             f"TP/FP/FN         {top['tp']}/{top['fp']}/{top['fn']}\n")
 
         summary.append({"model": name, **meta, "graded_on_fold": fold,
-                        "threshold": t, "min_size": m, "dilate": d, "low": lo,
+                        "threshold": t, "min_size": m, "dilate": d, "low": lo, "gac": g,
                         "dice": top["dice"], "f2": top["f2"], "final": round(final, 4),
                         "tp": top["tp"], "fp": top["fp"], "fn": top["fn"]})
 
