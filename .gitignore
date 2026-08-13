@@ -5,3 +5,10 @@ runs/
 *.pt
 scores*.csv
 results/
+archive/
+
+# NCC-owned, never redistribute from this public repo.
+# Both are cloned or copied in by l4_run.sh / l4_train.sh at setup time.
+data/
+evaluation.py
+solution2/*.log
