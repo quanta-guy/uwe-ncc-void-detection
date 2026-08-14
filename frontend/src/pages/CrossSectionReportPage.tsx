@@ -19,6 +19,7 @@ import { useData } from "../app";
 import { asset, bandOf, fieldStatus, reviewedCount } from "../api";
 import { BandChip, Card, Kpi, MRow, ProvisionalTag, StatusChip } from "../components/common";
 import { SeverityOverlay, SeverityFormula } from "../components/SeverityOverlay";
+import { ReportChat } from "../components/ReportChat";
 
 function download(name: string, text: string, type: string) {
   const url = URL.createObjectURL(new Blob([text], { type }));
@@ -266,6 +267,8 @@ export function CrossSectionReportPage() {
           </tbody>
         </table>
       </Card>
+
+      <ReportChat inspection={insp} fx={fx} status={status} />
     </div>
   );
 }

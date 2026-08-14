@@ -257,3 +257,7 @@ input[type="range"] { width: 100%; accent-color: var(--teal-600); }
   .review-layout { grid-template-columns: 1fr !important; }
   .review-layout .queue { max-height: 260px; }
 }
+
+/* Spinner for in-flight model responses. */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 0.9s linear infinite; }
