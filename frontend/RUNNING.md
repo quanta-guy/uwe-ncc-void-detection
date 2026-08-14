@@ -1,7 +1,18 @@
 # Running the prototype
 
-Three processes. The first two are required; the third only powers the report
-assistant.
+One command, from the repo root:
+
+```powershell
+.\demo.ps1          # starts everything, opens the browser; Ctrl+C stops it all
+.\demo.ps1 -Stop    # kills anything left on the demo ports
+```
+
+It builds the fixtures if they are missing, starts both servers, waits until each
+actually answers, reports whether Ollama is up, and cleans up its own processes on
+exit.
+
+Manually, it is three processes. The first two are required; the third only powers
+the report assistant.
 
 ```bash
 # 1. build the preloaded samples (once, ~2 min on GPU)
