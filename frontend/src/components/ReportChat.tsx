@@ -17,7 +17,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { Bot, Loader2, RefreshCw, SendHorizontal } from "lucide-react";
+import { Bot, Loader2, RefreshCw, SendHorizontal, X } from "lucide-react";
 import type { Fixtures, Inspection, ReviewEvent } from "../types";
 import { fieldStatus } from "../api";
 
@@ -128,6 +128,7 @@ export function ReportChat({ inspection, fx, status }: Props) {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
   const abort = useRef<AbortController | null>(null);
 
@@ -207,6 +208,17 @@ export function ReportChat({ inspection, fx, status }: Props) {
     }
   };
 
+  if (!open) {
+    return (
+      <button className="chat-launcher" onClick={() => setOpen(true)}
+              aria-label={`Ask the report assistant about ${inspection.sampleId}`}
+              title="Ask about this report">
+        <Bot size={26} aria-hidden />
+        <span className="badge" aria-hidden />
+      </button>
+    );
+  }
+
   /** Header is shared by every state, so the panel looks the same before a model loads. */
   const Head = ({ subtitle }: { subtitle?: React.ReactNode }) => (
     <div className="chat-head">
@@ -217,6 +229,10 @@ export function ReportChat({ inspection, fx, status }: Props) {
           {subtitle && <div className="chat-sub">{subtitle}</div>}
         </div>
       </div>
+      <button className="btn sm" onClick={() => setOpen(false)} aria-label="Close assistant"
+              style={{ position: "absolute", top: 14, right: 16 }}>
+        <X size={15} aria-hidden />
+      </button>
       <svg className="chat-wave" viewBox="0 0 1200 40" preserveAspectRatio="none" aria-hidden>
         <path d="M0,40 C300,0 900,0 1200,40 L1200,40 L0,40 Z" fill="#fff" />
       </svg>
@@ -236,7 +252,7 @@ export function ReportChat({ inspection, fx, status }: Props) {
 
   if (models.length === 0) {
     return (
-      <div className="chat">
+      <div className="chat chat-dock">
         <Head subtitle="No local model reachable" />
         <div className="chat-body">
           <div className="note warn">
@@ -253,36 +269,10 @@ export function ReportChat({ inspection, fx, status }: Props) {
   }
 
   return (
-    <div className="chat">
-      <div className="chat-head">
-        <div className="spread">
-          <div className="row">
-            <span className="chat-avatar"><Bot size={21} aria-hidden /></span>
-            <div>
-              <div className="chat-title">Report assistant</div>
-              <div className="chat-sub">
-                <span className="chat-online" aria-hidden /> Running locally · {model || "no model"}
-              </div>
-            </div>
-          </div>
-          <div className="row" style={{ gap: 8 }}>
-            <select value={model} onChange={(e) => setModel(e.target.value)}
-                    aria-label="Model" style={{ width: "auto", minHeight: 34, fontSize: 13 }}>
-              {models.map((m) => <option key={m} value={m}>{m}</option>)}
-            </select>
-            {msgs.length > 0 && (
-              <button className="btn sm" onClick={() => { abort.current?.abort(); setMsgs([]); }}>
-                <RefreshCw size={14} aria-hidden /> Clear
-              </button>
-            )}
-          </div>
-        </div>
-        {/* Curve into the message area, so the header reads as a distinct surface. */}
-        <svg className="chat-wave" viewBox="0 0 1200 40" preserveAspectRatio="none" aria-hidden>
-          <path d="M0,40 C300,0 900,0 1200,40 L1200,40 L0,40 Z" fill="#fff" />
-        </svg>
-      </div>
-
+    <div className="chat chat-dock">
+      <Head subtitle={
+        <><span className="chat-online" aria-hidden /> {inspection.sampleId} · {model}</>
+      } />
       <div className="chat-body" ref={scroller}>
         {msgs.length === 0 && (
           <>
@@ -326,10 +316,22 @@ export function ReportChat({ inspection, fx, status }: Props) {
                   : <SendHorizontal size={18} aria-hidden />}
           </button>
         </form>
-        <div className="provisional" style={{ marginTop: 10 }}>
+        {/* Model choice and reset live in the footer: the docked header is 430px wide
+            and cannot hold a title, a select and a button without crowding. */}
+        <div className="spread" style={{ marginTop: 10, gap: 8 }}>
+          <select value={model} onChange={(e) => setModel(e.target.value)} aria-label="Model"
+                  style={{ width: "auto", minHeight: 30, fontSize: 12, padding: "3px 8px" }}>
+            {models.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+          {msgs.length > 0 && (
+            <button className="btn sm" onClick={() => { abort.current?.abort(); setMsgs([]); }}>
+              <RefreshCw size={13} aria-hidden /> Clear
+            </button>
+          )}
+        </div>
+        <div className="provisional" style={{ marginTop: 8 }}>
           Generated from this report's data by a local model. Measurements come from
-          evaluation.py, not from the model — check any figure against the panels above
-          before acting on it.
+          evaluation.py — check any figure against the report before acting on it.
         </div>
       </div>
     </div>

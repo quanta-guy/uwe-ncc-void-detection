@@ -30,9 +30,12 @@ const check = (name, ok, detail = "") => {
 await page.goto(`${BASE}/reports/INS-2026-041`, { waitUntil: "networkidle0" });
 await new Promise((r) => setTimeout(r, 1500));   // model list fetch
 
-const mounted = await page.evaluate(() =>
-  document.body.textContent?.includes("Report assistant") ?? false);
-check("Assistant is mounted on the report", mounted);
+// The assistant is docked bottom-right and starts collapsed, so open it first.
+const launcher = await page.$(".chat-launcher");
+check("Launcher is present on the report", !!launcher);
+if (launcher) { await launcher.click(); await new Promise((r) => setTimeout(r, 900)); }
+const mounted = await page.evaluate(() => !!document.querySelector(".chat-dock"));
+check("Assistant opens as a docked panel", mounted);
 
 const modelName = await page.evaluate(() => {
   const s = [...document.querySelectorAll("select")].find((e) =>
@@ -60,21 +63,21 @@ async function ask(question) {
     setter.call(i, q);
     i.dispatchEvent(new Event("input", { bubbles: true }));
   }, question);
+  // Send is icon-only now; find it by role rather than by label text.
   await page.evaluate(() => {
-    [...document.querySelectorAll("button")]
-      .find((b) => b.textContent?.trim().startsWith("Ask"))?.click();
+    document.querySelector('button[aria-label="Send question"]')?.click();
   });
 
   // The working indicator is stable text too, so it must never count as an answer -
   // otherwise the loop exits while the model is still reasoning and every question
   // reports the previous one's reply.
-  const PLACEHOLDER = /reading the report|reasoning over the report/i;
+  const PLACEHOLDER = /reading the report|reasoning over the report|Ask me about/i;
   let last = "";
   let stable = 0;
   for (let i = 0; i < 240 && stable < 5; i++) {
     await new Promise((r) => setTimeout(r, 1000));
     const now = await page.evaluate(() => {
-      const blocks = [...document.querySelectorAll('div[style*="pre-wrap"]')];
+      const blocks = [...document.querySelectorAll(".bubble.bot")];
       return blocks.at(-1)?.textContent?.trim() ?? "";
     });
     const real = now.length > 0 && !PLACEHOLDER.test(now);
