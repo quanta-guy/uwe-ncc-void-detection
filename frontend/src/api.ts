@@ -23,8 +23,103 @@ export async function loadFixtures(): Promise<Fixtures> {
       `fixtures.json missing (${res.status}). Run: python frontend/tools/build_fixtures.py`,
     );
   }
-  return res.json();
+  const fx = (await res.json()) as Fixtures;
+
+  // Inspections the user imported live are written to a separate file, never merged
+  // into fixtures.json - that stays a reproducible build artifact. Missing file just
+  // means nothing has been imported yet, which is not an error.
+  try {
+    const extra = await fetch(`${DATA}/imported.json`, { cache: "no-store" });
+    if (extra.ok) {
+      const { inspections } = (await extra.json()) as { inspections: Inspection[] };
+      const ids = new Set(inspections.map((i) => i.inspectionId));
+      fx.inspections = [...inspections, ...fx.inspections.filter((i) => !ids.has(i.inspectionId))];
+    }
+  } catch {
+    /* backend not running: the two fixture samples still open */
+  }
+  return fx;
 }
+
+// ---------- live backend ----------
+/**
+ * Everything below needs `python frontend/server/app.py`. The app is deliberately
+ * usable without it - fixtures render read-only - so each call reports the backend
+ * being absent as a plain message rather than throwing the UI into an error state.
+ */
+
+export interface ModelGroup {
+  id: string;
+  label: string;
+  count: number;
+  paths: string[];
+  sizeMb: number;
+}
+
+export interface ValidationResult {
+  ok: boolean;
+  id: string;
+  detail: string;
+  classes?: number;
+  dims?: string;
+  members?: number;
+  device?: string;
+  elapsedMs?: number;
+  disagreementAvailable?: boolean;
+}
+
+export interface ImportJob {
+  state: "running" | "done" | "error";
+  done: number;
+  total: number;
+  current: string;
+  inspectionId: string;
+  error?: string;
+  inspection?: Inspection;
+}
+
+async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`/api${path}`, init);
+  } catch {
+    throw new Error("Inference backend is not running. Start it with: python frontend/server/app.py");
+  }
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(body?.detail ?? `${res.status} ${res.statusText}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+export const listModels = () =>
+  api<{ models: ModelGroup[]; active: string; threshold: number; minSize: number }>("/models");
+
+export const validateModel = (id: string) =>
+  api<ValidationResult>("/models/validate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+
+export const activateModel = (id: string) =>
+  api<{ active: string }>("/models/activate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+
+export function startImport(form: FormData) {
+  return api<{ jobId: string; total: number; model: string; device: string }>(
+    "/inspections",
+    { method: "POST", body: form },
+  );
+}
+
+export const jobStatus = (jobId: string) => api<ImportJob>(`/jobs/${jobId}`);
+
+export const deleteImported = (id: string) =>
+  api<{ removed: string }>(`/inspections/${id}`, { method: "DELETE" });
 
 // ---------- review store ----------
 

@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "api": "conda run --no-capture-output -n uwe_hack python server/app.py",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node tools/visual_test.mjs && node tools/interaction_test.mjs && node tools/import_test.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.460.0",

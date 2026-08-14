@@ -244,6 +244,15 @@ input[type="range"] { width: 100%; accent-color: var(--teal-600); }
 }
 .note.warn { border-left-color: var(--warning); background: #fffbf2; }
 .note.bad  { border-left-color: var(--danger); background: #fdf6f6; }
+.note.good { border-left-color: var(--success); background: #f4faf5; }
+
+/* Batch-inference progress. Determinate, because the field count is known up
+   front - an indeterminate bar would hide that the run is making progress. */
+.progress { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+.progress > span {
+  display: block; height: 100%; background: var(--teal-600); border-radius: 3px;
+  transition: width 0.3s ease;
+}
 
 .empty { text-align: center; padding: 60px 20px; color: var(--muted); }
 .mono { font-family: Consolas, "Courier New", monospace; font-size: 13px; }

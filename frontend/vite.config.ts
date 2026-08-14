@@ -14,6 +14,10 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: {
+      // The inference backend. Same-origin through the proxy so the page needs no
+      // CORS config, and so the app still loads (read-only, from fixtures) when the
+      // backend is not running - which is what "prototype" has to mean here.
+      "/api": { target: "http://127.0.0.1:8000", changeOrigin: true },
       "/ollama": {
         target: "http://127.0.0.1:11434",
         changeOrigin: true,

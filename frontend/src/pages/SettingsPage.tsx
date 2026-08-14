@@ -11,23 +11,55 @@
  * Making it an editable profile is the honest resolution.
  */
 
-import { useState } from "react";
-import { CheckCircle2, FolderOpen, ShieldCheck } from "lucide-react";
+import { useEffect, useState } from "react";
+import { AlertTriangle, CheckCircle2, FolderOpen, Loader2, ShieldCheck } from "lucide-react";
 import { useData } from "../app";
-import { clearReviews, restoreInspections } from "../api";
+import {
+  activateModel, clearReviews, listModels, restoreInspections, validateModel,
+} from "../api";
+import type { ModelGroup, ValidationResult } from "../api";
 import { Card, MRow } from "../components/common";
-
-const CANDIDATES = [
-  ["runs/unet_f0..f4.pt", "production-v1.4 · 5-fold ensemble", true],
-  ["archive/l4-s3/s3_unet_all_s0..2.pt", "solution 3 · canonical 0.57 um/px", false],
-  ["archive/l4-s3c/s3_um1p33_all_s0..2.pt", "solution 3 · coarse 1.33 um/px", false],
-] as const;
 
 export function SettingsPage() {
   const { fx, reviews, hidden } = useData();
-  const [active, setActive] = useState<string>(CANDIDATES[0][0]);
-  const [validated, setValidated] = useState<string | null>(CANDIDATES[0][0] as string);
+  const [models, setModels] = useState<ModelGroup[]>([]);
+  const [backendErr, setBackendErr] = useState<string | null>(null);
+  const [selected, setSelected] = useState("");
+  const [activeId, setActiveId] = useState("");
+  const [result, setResult] = useState<ValidationResult | null>(null);
+  const [busy, setBusy] = useState(false);
   const [limit, setLimit] = useState(String(fx.profile.clusterSeverityLimitUm));
+
+  // Checkpoints are discovered on disk, not listed in the source. A new run appears
+  // here without a code change, which is the point of making weights selectable.
+  useEffect(() => {
+    listModels()
+      .then(({ models: m, active }) => {
+        setModels(m);
+        setActiveId(active);
+        setSelected(active || m[0]?.id || "");
+      })
+      .catch((e: Error) => setBackendErr(e.message));
+  }, []);
+
+  const runValidation = async () => {
+    setBusy(true);
+    setResult(null);
+    try {
+      const r = await validateModel(selected);
+      setResult(r);
+      // Loading is not activating. Only a checkpoint that passed the gate becomes
+      // the one new inspections run on.
+      if (r.ok) {
+        await activateModel(selected);
+        setActiveId(selected);
+      }
+    } catch (e) {
+      setResult({ ok: false, id: selected, detail: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div className="page">
@@ -39,35 +71,69 @@ export function SettingsPage() {
 
       <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", alignItems: "start" }}>
         <Card title="Active model">
-          <label className="field" htmlFor="mdl">Checkpoint</label>
-          <select id="mdl" value={active}
-                  onChange={(e) => { setActive(e.target.value); setValidated(null); }}>
-            {CANDIDATES.map(([path, label]) => (
-              <option key={path} value={path}>{label}</option>
-            ))}
-          </select>
-
-          <div className="row" style={{ marginTop: 14 }}>
-            <button className="btn primary" onClick={() => setValidated(active)}>
-              <ShieldCheck size={16} aria-hidden /> Validate model
-            </button>
-            {validated === active && (
-              <span className="chip pass">
-                <CheckCircle2 size={14} aria-hidden /> Loads · 3 classes · 256x256
-              </span>
-            )}
-          </div>
-
-          {validated !== active && (
-            <div className="note warn" style={{ marginTop: 14 }}>
-              Selecting a file does not activate it. Validation must confirm the
-              checkpoint loads and returns a three-class mask at the expected
-              dimensions before it can be used for an inspection.
+          {backendErr ? (
+            <div className="note bad">
+              <strong>Inference backend is not running.</strong> Checkpoints cannot be
+              listed or validated, and new inspections cannot be imported.
+              <div className="mono" style={{ marginTop: 8 }}>
+                python frontend/server/app.py
+              </div>
             </div>
+          ) : (
+            <>
+              <label className="field" htmlFor="mdl">
+                Checkpoint — {models.length} discovered on disk
+              </label>
+              <select id="mdl" value={selected}
+                      onChange={(e) => { setSelected(e.target.value); setResult(null); }}>
+                {models.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label} · {m.sizeMb} MB{m.id === activeId ? "  (active)" : ""}
+                  </option>
+                ))}
+              </select>
+
+              <div className="row" style={{ marginTop: 14 }}>
+                <button className="btn primary" onClick={runValidation} disabled={busy || !selected}>
+                  {busy
+                    ? <><Loader2 size={16} className="spin" aria-hidden /> Loading checkpoint…</>
+                    : <><ShieldCheck size={16} aria-hidden /> Validate and activate</>}
+                </button>
+                {result && (
+                  <span className={`chip ${result.ok ? "pass" : "fail"}`}>
+                    {result.ok
+                      ? <CheckCircle2 size={14} aria-hidden />
+                      : <AlertTriangle size={14} aria-hidden />}
+                    {result.ok
+                      ? `${result.classes} classes · ${result.dims} · ${result.device} · ${result.elapsedMs} ms`
+                      : "Rejected"}
+                  </span>
+                )}
+              </div>
+
+              {result && (
+                <div className={`note ${result.ok ? "good" : "bad"}`} style={{ marginTop: 12 }}>
+                  {result.detail}
+                  {result.ok && result.disagreementAvailable === false && (
+                    <> Single checkpoint: model disagreement will be zero and no field
+                      will ever be queued for review on disagreement.</>
+                  )}
+                </div>
+              )}
+
+              {selected !== activeId && (
+                <div className="note warn" style={{ marginTop: 14 }}>
+                  Selecting a file does not activate it. The checkpoint must load and
+                  return a three-class mask at the expected dimensions before an
+                  inspection is allowed to run on it.
+                </div>
+              )}
+            </>
           )}
 
           <div className="mlist" style={{ marginTop: 14 }}>
-            <MRow k="Model ID" v={<span className="mono">{fx.model.id}</span>} />
+            <MRow k="Active for new imports" v={<span className="mono">{activeId || "—"}</span>} />
+            <MRow k="Fixture model ID" v={<span className="mono">{fx.model.id}</span>} />
             <MRow k="SHA-256" v={<span className="mono">{fx.model.sha256}...</span>} />
             <MRow k="Threshold" v={fx.model.threshold} />
             <MRow k="Minimum object size" v={`${fx.model.minSize} px`} />
