@@ -48,13 +48,41 @@ MIN_SIZES = [2, 4, 10]
 
 
 def load_ckpt(path, device):
+    """Rebuild a checkpoint. `target_um` comes from the checkpoint, never a flag.
+
+    A model trained at one spacing and scored at another still runs and still
+    produces plausible maps - it just sees fibres at the wrong size and scores
+    worse for no visible reason. That is the same failure as evaluating under
+    the wrong normalisation, and the only safe place for the answer is the
+    checkpoint itself.
+    """
     ckpt = torch.load(path, map_location=device)
     net, _ = build(ckpt.get("arch", "unet"), ckpt.get("base", 32),
                    ckpt.get("depth", 4), ckpt.get("chroma", False))
     net = net.to(device)
     net.load_state_dict(ckpt["model"])
     net.eval()
+    if "target_um" not in ckpt:
+        sys.exit(f"{Path(path).name} has no target_um - retrain, or it cannot be "
+                 f"scored at a known spacing")
     return net, ckpt
+
+
+def resolve_target(ckpts, override=None):
+    """The spacing these checkpoints were trained at, with an explicit override.
+
+    Ensembling across spacings is refused rather than silently averaged: the
+    members would be looking at different physical scales.
+    """
+    spacings = {round(float(k["target_um"]), 6) for k in ckpts}
+    if len(spacings) != 1:
+        sys.exit(f"checkpoints span different training spacings: {sorted(spacings)}")
+    trained = spacings.pop()
+    if override is not None and abs(override - trained) > 1e-6:
+        print(f"  WARNING: --target-um {override} overrides the {trained} these models "
+              f"were trained at. Deliberate re-scaling only; otherwise the score is wrong.")
+        return override
+    return trained
 
 
 @torch.no_grad()
@@ -108,7 +136,9 @@ def main():
     ap.add_argument("--pattern", default="s3_unet_f{f}_s0.pt")
     ap.add_argument("--ckpt", default=None)
     ap.add_argument("--oof", action="store_true")
-    ap.add_argument("--target-um", type=float, default=CANONICAL_UM_PER_PX)
+    ap.add_argument("--target-um", type=float, default=None,
+                    help="Override the spacing the checkpoints were trained at. "
+                         "Leave unset - the default is read from each checkpoint.")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--out", default=str(OUT))
     args = ap.parse_args()
@@ -120,10 +150,12 @@ def main():
 
     if not args.oof:
         net, ckpt = load_ckpt(args.ckpt, device)
+        target = resolve_target([ckpt], args.target_um)
         df = index3(ckpt["fold"], assignment=assign).query("is_val")
         if args.limit:
             df = df.head(args.limit)
-        cached = collect(net, df, device, args.target_um)
+        print(f"  scoring at {target} um/px (trained at {ckpt['target_um']})")
+        cached = collect(net, df, device, target)
         best, rows = _sweep(*cached, THRESHOLDS, MIN_SIZES, dilations=[0])
         print(f"\nfold {ckpt['fold']}: {len(df)} held-out originals, "
               f"tuned-on-this-data score {best[0]:.4f} (optimistic - use --oof)")
@@ -132,18 +164,28 @@ def main():
     # Nested: the knobs come from folds that are not the one being scored, so
     # nothing is selected on the data being reported.
     print("collecting predictions per fold (each by the model that held it out)\n")
-    per_fold = {}
+    loaded = []
     for f in range(N_FOLDS):
         path = Path(args.runs) / args.pattern.format(f=f)
         if not path.exists():
             sys.exit(f"missing {path}")
         net, ckpt = load_ckpt(path, device)
         assert ckpt["fold"] == f, f"{path.name} says fold {ckpt['fold']}"
+        loaded.append((net, ckpt))
+
+    # One spacing for the whole sweep, taken from the checkpoints. Resolving it
+    # before any prediction means a mixed-spacing run stops here rather than
+    # producing a number that looks fine.
+    target = resolve_target([c for _, c in loaded], args.target_um)
+    print(f"  scoring at {target} um/px, read from the checkpoints\n")
+
+    per_fold = {}
+    for f, (net, ckpt) in enumerate(loaded):
         df = index3(f, assignment=assign).query("is_val")
         if args.limit:
             df = df.head(args.limit)
         print(f"  fold {f}: {len(df)} held-out originals, {df.group.nunique()} micrographs")
-        per_fold[f] = collect(net, df, device, args.target_um)
+        per_fold[f] = collect(net, df, device, target)
 
     rows_out, finals = [], []
     for f in range(N_FOLDS):
