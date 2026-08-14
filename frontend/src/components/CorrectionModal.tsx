@@ -16,6 +16,7 @@ import { useRef, useState } from "react";
 import { AlertTriangle, Pencil, Upload } from "lucide-react";
 import { asset } from "../api";
 import type { Field, Inspection } from "../types";
+import { MaskEditor } from "./MaskEditor";
 
 const REASONS: Array<[string, string]> = [
   ["missed_void", "Missed void"],
@@ -75,6 +76,8 @@ export function CorrectionModal({ field, inspection, onClose, onCorrected }: Pro
   const [other, setOther] = useState("");
   const [errors, setErrors] = useState<string[] | null>(null);
   const [uploaded, setUploaded] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [edited, setEdited] = useState<{ voidPct: number; changedPx: number } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const ready = reason !== "" && (reason !== "other" || other.trim() !== "");
@@ -137,7 +140,7 @@ export function CorrectionModal({ field, inspection, onClose, onCorrected }: Pro
                       onClick={() => fileRef.current?.click()}>
                 <Upload size={16} aria-hidden /> Upload corrected mask
               </button>
-              <button className="btn" disabled={!ready} title="Brush editor is not in this prototype build">
+              <button className="btn" disabled={!ready} onClick={() => setEditing(true)}>
                 <Pencil size={16} aria-hidden /> Edit mask
               </button>
             </div>
@@ -157,6 +160,15 @@ export function CorrectionModal({ field, inspection, onClose, onCorrected }: Pro
               </div>
             )}
 
+            {edited && (
+              <div className="note" style={{ borderLeftColor: "var(--success)" }}>
+                <strong>Mask edited.</strong> {edited.changedPx} pixels changed; void
+                areal fraction now {edited.voidPct.toFixed(3)}% (was{" "}
+                {field.voidArealFractionPct.toFixed(3)}%). Saving records it as a new
+                correction version and leaves the prediction untouched.
+              </div>
+            )}
+
             {uploaded && (
               <div className="note" style={{ borderLeftColor: "var(--success)" }}>
                 <strong>{uploaded}</strong> passed validation: dimensions match and all
@@ -167,7 +179,10 @@ export function CorrectionModal({ field, inspection, onClose, onCorrected }: Pro
 
             <div className="row" style={{ marginTop: 18, justifyContent: "flex-end" }}>
               <button className="btn" onClick={onClose}>Cancel</button>
-              <button className="btn primary" disabled={!ready}
+              <button className="btn primary" disabled={!ready || (!edited && !uploaded)}
+                      title={!edited && !uploaded
+                        ? "Edit or upload a corrected mask first"
+                        : "Record the correction"}
                       onClick={() => onCorrected(label)}>
                 Save correction
               </button>
@@ -175,6 +190,19 @@ export function CorrectionModal({ field, inspection, onClose, onCorrected }: Pro
           </div>
         </div>
       </div>
+
+      {editing && (
+        <MaskEditor
+          field={field}
+          onCancel={() => setEditing(false)}
+          onSave={(r) => {
+            setEditing(false);
+            setEdited({ voidPct: r.voidPct, changedPx: r.changedPx });
+            setErrors(null);
+            setUploaded(null);
+          }}
+        />
+      )}
     </div>
   );
 }

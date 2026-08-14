@@ -131,3 +131,33 @@ export function seededRows(): Inspection[] {
     processed: done,
   } as Inspection & { processed: number }));
 }
+
+// ---------- local removal ----------
+/**
+ * Removing an inspection from the workspace.
+ *
+ * Fixtures are a read-only build artifact, so "delete" hides the inspection locally
+ * rather than destroying measurements - which is the honest behaviour for a prototype
+ * and is reversible from Settings. A real deletion would archive the inspection folder
+ * through the API, never unlink it.
+ */
+const HIDDEN = "cip.hidden.v1";
+
+export function readHidden(): string[] {
+  try {
+    return JSON.parse(localStorage.getItem(HIDDEN) ?? "[]") as string[];
+  } catch {
+    return [];
+  }
+}
+
+export function hideInspection(id: string) {
+  const next = [...new Set([...readHidden(), id])];
+  localStorage.setItem(HIDDEN, JSON.stringify(next));
+  window.dispatchEvent(new Event("cip:reviews"));
+}
+
+export function restoreInspections() {
+  localStorage.removeItem(HIDDEN);
+  window.dispatchEvent(new Event("cip:reviews"));
+}

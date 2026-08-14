@@ -10,7 +10,7 @@
  * the modal validates and then says so plainly rather than pretending to import.
  */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { FolderOpen } from "lucide-react";
 import { useData } from "../app";
 
@@ -24,10 +24,34 @@ export function NewInspectionModal({ onClose }: { onClose: () => void }) {
   const [material, setMaterial] = useState("C/PEEK");
   const [calibration, setCalibration] = useState("0.57");
   const [submitted, setSubmitted] = useState(false);
+  const [scan, setScan] = useState<{ images: number; dupes: string[]; skipped: number } | null>(null);
+  const dirRef = useRef<HTMLInputElement>(null);
+
+  /**
+   * Real folder selection. A browser cannot hand back an absolute path, but
+   * webkitdirectory gives the actual file list - which is what the spec wants
+   * validated anyway: supported extensions, duplicate stems, empty folders.
+   */
+  const onFolder = (files: FileList | null) => {
+    if (!files || files.length === 0) {
+      setScan({ images: 0, dupes: [], skipped: 0 });
+      return;
+    }
+    const ok = /\.(png|jpe?g|tiff?)$/i;
+    const all = Array.from(files);
+    const images = all.filter((f) => ok.test(f.name));
+    const stems = images.map((f) => f.name.replace(/\.[^.]+$/, ""));
+    const seen = new Set<string>();
+    const dupes = [...new Set(stems.filter((st) => seen.size === seen.add(st).size))];
+    const rel = (all[0] as File & { webkitRelativePath?: string }).webkitRelativePath ?? "";
+    setFolder(rel.split("/")[0] || "selected folder");
+    setScan({ images: images.length, dupes, skipped: all.length - images.length });
+  };
 
   const cal = Number(calibration);
   const calBad = !Number.isFinite(cal) || cal <= 0;
-  const ready = sampleId.trim() !== "" && folder.trim() !== "" && !calBad;
+  const ready = sampleId.trim() !== "" && folder.trim() !== "" && !calBad
+    && (!scan || (scan.images > 0 && scan.dupes.length === 0));
 
   return (
     <div className="backdrop" role="dialog" aria-modal aria-label="New inspection"
@@ -54,12 +78,32 @@ export function NewInspectionModal({ onClose }: { onClose: () => void }) {
             <label className="field" htmlFor="fld">Image folder</label>
             <div className="row">
               <input id="fld" type="text" value={folder}
-                     placeholder="data\Data sets\Test data set\Images"
+                     placeholder="Choose a folder of microscopy images"
                      onChange={(e) => setFolder(e.target.value)} />
-              <button className="btn" onClick={() => setFolder("data\\Data sets\\Test data set\\Images")}>
+              <input ref={dirRef} type="file" multiple style={{ display: "none" }}
+                     {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
+                     onChange={(e) => onFolder(e.target.files)} />
+              <button className="btn" onClick={() => dirRef.current?.click()}>
                 <FolderOpen size={16} aria-hidden /> Browse
               </button>
             </div>
+            {scan && (
+              <div className={`note ${scan.images === 0 || scan.dupes.length ? "bad" : ""}`}
+                   style={{ marginTop: 10 }}>
+                {scan.images === 0
+                  ? "No supported images found. Allowed: .png, .jpg, .jpeg, .tif, .tiff."
+                  : <><strong>{scan.images} image{scan.images === 1 ? "" : "s"}</strong> ready to import.</>}
+                {scan.skipped > 0 && <> {scan.skipped} unsupported file
+                  {scan.skipped === 1 ? "" : "s"} ignored.</>}
+                {scan.dupes.length > 0 && (
+                  <div style={{ marginTop: 6 }}>
+                    Duplicate stems would collide and are rejected:{" "}
+                    <span className="mono">{scan.dupes.slice(0, 4).join(", ")}</span>
+                    {scan.dupes.length > 4 && ` +${scan.dupes.length - 4} more`}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <div>
             <label className="field" htmlFor="mat">Material</label>

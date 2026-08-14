@@ -14,7 +14,7 @@ import {
 import {
   ClipboardList, FileText, LayoutList, Settings as SettingsIcon, Sparkles,
 } from "lucide-react";
-import { loadFixtures, readReviews, statusMap } from "./api";
+import { loadFixtures, readHidden, readReviews, statusMap } from "./api";
 import type { Fixtures, ReviewEvent } from "./types";
 import { InspectionsPage } from "./pages/InspectionsPage";
 import { SampleAnalysisPage } from "./pages/SampleAnalysisPage";
@@ -28,6 +28,7 @@ interface Ctx {
   fx: Fixtures;
   reviews: ReviewEvent[];
   status: Record<string, ReviewEvent>;
+  hidden: string[];
 }
 const DataCtx = createContext<Ctx | null>(null);
 
@@ -65,13 +66,14 @@ export default function App() {
   const [fx, setFx] = useState<Fixtures | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [reviews, setReviews] = useState<ReviewEvent[]>(readReviews());
+  const [hidden, setHidden] = useState<string[]>(readHidden());
 
   useEffect(() => {
     loadFixtures().then(setFx).catch((e: Error) => setErr(e.message));
   }, []);
 
   useEffect(() => {
-    const sync = () => setReviews(readReviews());
+    const sync = () => { setReviews(readReviews()); setHidden(readHidden()); };
     window.addEventListener("cip:reviews", sync);
     window.addEventListener("storage", sync);
     return () => {
@@ -111,7 +113,7 @@ export default function App() {
   }
 
   return (
-    <DataCtx.Provider value={{ fx, reviews, status: statusMap(reviews) }}>
+    <DataCtx.Provider value={{ fx, reviews, status: statusMap(reviews), hidden }}>
       <BrowserRouter>
         <Shell>
           <Routes>

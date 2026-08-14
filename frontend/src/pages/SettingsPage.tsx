@@ -14,7 +14,7 @@
 import { useState } from "react";
 import { CheckCircle2, FolderOpen, ShieldCheck } from "lucide-react";
 import { useData } from "../app";
-import { clearReviews } from "../api";
+import { clearReviews, restoreInspections } from "../api";
 import { Card, MRow } from "../components/common";
 
 const CANDIDATES = [
@@ -24,7 +24,7 @@ const CANDIDATES = [
 ] as const;
 
 export function SettingsPage() {
-  const { fx, reviews } = useData();
+  const { fx, reviews, hidden } = useData();
   const [active, setActive] = useState<string>(CANDIDATES[0][0]);
   const [validated, setValidated] = useState<string | null>(CANDIDATES[0][0] as string);
   const [limit, setLimit] = useState(String(fx.profile.clusterSeverityLimitUm));
@@ -108,6 +108,8 @@ export function SettingsPage() {
               <MRow k="Prototype data folder" v={<span className="mono">frontend/public/data</span>} />
               <MRow k="Fixtures generated" v={new Date(fx.generatedAt).toLocaleString()} />
               <MRow k="Review events recorded" v={reviews.length} />
+              <MRow k="Inspections hidden" v={hidden.length}
+                    title="Removed from the workspace but not destroyed" />
               <MRow k="Keep original predictions" v="Always on" tone="good"
                     title="Corrections are new versions; predictions are never overwritten" />
             </div>
@@ -117,6 +119,10 @@ export function SettingsPage() {
                 if (confirm("Clear all recorded review decisions in this browser?")) clearReviews();
               }}>
                 Reset review history
+              </button>
+              <button className="btn" disabled={hidden.length === 0}
+                      onClick={restoreInspections}>
+                Restore {hidden.length} hidden inspection{hidden.length === 1 ? "" : "s"}
               </button>
             </div>
           </Card>

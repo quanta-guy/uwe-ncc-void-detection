@@ -12,10 +12,10 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Boxes, CheckCircle2, FolderTree, LoaderCircle, Search, Table2, UserCheck, X,
+  Boxes, CheckCircle2, FolderTree, LoaderCircle, Search, Table2, Trash2, UserCheck, X,
 } from "lucide-react";
 import { useData } from "../app";
-import { reviewedCount, seededRows } from "../api";
+import { hideInspection, reviewedCount, seededRows } from "../api";
 import type { Inspection } from "../types";
 import { Card, DispositionChip, MRow } from "../components/common";
 import { NewInspectionModal } from "../components/NewInspectionModal";
@@ -23,7 +23,7 @@ import { NewInspectionModal } from "../components/NewInspectionModal";
 type Filter = "all" | "processing" | "ready" | "complete";
 
 export function InspectionsPage() {
-  const { fx, status } = useData();
+  const { fx, status, hidden } = useData();
   const nav = useNavigate();
   const [filter, setFilter] = useState<Filter>("all");
   const [view, setView] = useState<"folder" | "table">("table");
@@ -31,7 +31,19 @@ export function InspectionsPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
 
-  const rows = useMemo(() => [...fx.inspections, ...seededRows()], [fx]);
+  const rows = useMemo(
+    () => [...fx.inspections, ...seededRows()].filter((i) => !hidden.includes(i.inspectionId)),
+    [fx, hidden],
+  );
+
+  const remove = (id: string, label: string) => {
+    if (confirm(`Remove ${label} from the workspace?
+
+Measurements and predictions are not destroyed - the inspection is hidden locally and can be restored from Settings.`)) {
+      hideInspection(id);
+      if (selected === id) setSelected(null);
+    }
+  };
 
   const stateOf = (i: Inspection) => {
     if (i.state === "processing") return "processing";
@@ -116,7 +128,7 @@ export function InspectionsPage() {
                 <tr>
                   <th>Inspection</th><th>Sample</th><th>Material</th>
                   <th className="num">Fields</th><th>Review</th>
-                  <th>Preliminary result</th><th>Model</th>
+                  <th>Preliminary result</th><th>Model</th><th aria-label="Actions" />
                 </tr>
               </thead>
               <tbody>
@@ -139,6 +151,13 @@ export function InspectionsPage() {
                         {i.seeded && <span className="chip muted" style={{ marginLeft: 6 }}>seeded</span>}
                       </td>
                       <td className="mono">{i.model.id.split(" ")[0]}</td>
+                      <td>
+                        <button className="btn sm" aria-label={`Remove ${i.inspectionId}`}
+                                title="Remove from workspace"
+                                onClick={(e) => { e.stopPropagation(); remove(i.inspectionId, i.sampleId); }}>
+                          <Trash2 size={14} aria-hidden />
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
@@ -214,6 +233,10 @@ export function InspectionsPage() {
                     disabled={sel.fields.length === 0}
                     onClick={() => nav(`/inspections/${sel.inspectionId}`)}>
               Open sample analysis
+            </button>
+            <button className="btn" style={{ width: "100%", marginTop: 8, justifyContent: "center" }}
+                    onClick={() => remove(sel.inspectionId, sel.sampleId)}>
+              <Trash2 size={15} aria-hidden /> Remove from workspace
             </button>
           </Card>
         )}
