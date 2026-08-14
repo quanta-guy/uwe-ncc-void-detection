@@ -261,3 +261,108 @@ input[type="range"] { width: 100%; accent-color: var(--teal-600); }
 /* Spinner for in-flight model responses. */
 @keyframes spin { to { transform: rotate(360deg); } }
 .spin { animation: spin 0.9s linear infinite; }
+
+/* ---------- report assistant ----------
+   Deliberately styled as a distinct conversational surface rather than another
+   measurement card: a reviewer should never mistake a generated answer for a
+   measured panel. The gradient is the product teal, not a consumer blue, so it
+   reads as part of the tool. */
+.chat {
+  border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+  background: var(--surface); box-shadow: 0 4px 18px rgb(10 35 50 / 10%); margin-top: 16px;
+}
+.chat-head {
+  background: linear-gradient(135deg, var(--teal-700) 0%, var(--teal-600) 55%, #00a7ad 100%);
+  color: #fff; padding: 16px 20px 0; position: relative;
+}
+.chat-head .row { gap: 12px; }
+.chat-title { font-size: 17px; font-weight: 600; line-height: 1.25; }
+.chat-sub { font-size: 12.5px; opacity: 0.85; display: flex; align-items: center; gap: 6px; }
+.chat-avatar {
+  width: 40px; height: 40px; border-radius: 50%; flex: none; display: grid;
+  place-items: center; background: rgb(255 255 255 / 18%);
+  border: 2px solid rgb(255 255 255 / 35%);
+}
+.chat-online { width: 8px; height: 8px; border-radius: 50%; background: #6ef0a4; display: inline-block; }
+/* Controls sitting on the gradient need their own treatment. */
+.chat-head select, .chat-head .btn {
+  background: rgb(255 255 255 / 15%); border-color: rgb(255 255 255 / 30%); color: #fff;
+}
+.chat-head select option { color: var(--text); }
+.chat-head .btn:hover { background: rgb(255 255 255 / 26%); }
+.chat-wave { display: block; width: 100%; height: 26px; margin-top: 14px; }
+
+.chat-body { padding: 4px 20px 16px; max-height: 380px; overflow-y: auto; background: var(--surface); }
+.bubble {
+  /* fit-content so a one-line question hugs its text instead of stretching to the
+     full max-width, which reads as a banner rather than a message. */
+  max-width: 82%; width: fit-content; padding: 11px 15px; font-size: 14.5px;
+  line-height: 1.55; white-space: pre-wrap; word-break: break-word;
+}
+.bubble.bot {
+  background: #eef2f4; color: var(--text);
+  border-radius: 16px 16px 16px 5px; margin: 10px 0;
+}
+.bubble.me {
+  background: var(--teal-600); color: #fff;
+  border-radius: 16px 16px 5px 16px; margin: 10px 0 10px auto;
+}
+.chat-q {
+  border: 1px solid var(--teal-600); background: var(--surface); color: var(--teal-700);
+  border-radius: 999px; padding: 9px 16px; font-size: 13.5px; text-align: left;
+  min-height: 0; line-height: 1.4;
+}
+.chat-q:hover { background: var(--teal-100); }
+
+.chat-foot { border-top: 1px solid var(--border); padding: 12px 16px 14px; background: var(--surface); }
+.chat-input { display: flex; align-items: center; gap: 10px; }
+.chat-input input {
+  border-radius: 999px; padding: 11px 18px; border-color: var(--border); background: var(--canvas);
+}
+.send {
+  width: 44px; height: 44px; min-height: 44px; flex: none; border-radius: 50%; border: 0;
+  background: linear-gradient(135deg, var(--teal-600), #00a7ad); color: #fff;
+  display: grid; place-items: center; box-shadow: 0 3px 10px rgb(0 133 139 / 40%);
+}
+.send:hover:not(:disabled) { filter: brightness(1.08); }
+.send:disabled { background: #b8c4cc; box-shadow: none; }
+
+/* ---------- floating assistant ----------
+   Docked bottom-right rather than inline: the report needs its full width for
+   evidence, and a question usually occurs while reading a panel further up. */
+.chat-launcher {
+  position: fixed; right: 26px; bottom: 26px; z-index: 90;
+  width: 60px; height: 60px; min-height: 60px; border-radius: 50%; border: 0;
+  background: linear-gradient(135deg, var(--teal-700), #00a7ad); color: #fff;
+  display: grid; place-items: center;
+  box-shadow: 0 6px 22px rgb(0 111 117 / 45%);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.chat-launcher:hover { transform: translateY(-2px); box-shadow: 0 9px 26px rgb(0 111 117 / 52%); }
+.chat-launcher .badge {
+  position: absolute; top: -2px; right: -2px; width: 15px; height: 15px;
+  border-radius: 50%; background: var(--nav-active); border: 2.5px solid var(--canvas);
+}
+.chat-launcher .badge::after {
+  content: ""; position: absolute; inset: -4px; border-radius: 50%;
+  border: 2px solid var(--nav-active); animation: ping 1.9s ease-out infinite;
+}
+@keyframes ping {
+  0% { transform: scale(0.75); opacity: 0.9; }
+  70%, 100% { transform: scale(1.7); opacity: 0; }
+}
+
+.chat-dock {
+  position: fixed; right: 26px; bottom: 26px; z-index: 91;
+  width: 430px; max-width: calc(100vw - 40px);
+  height: min(620px, calc(100vh - 110px));
+  display: flex; flex-direction: column; margin-top: 0;
+  box-shadow: 0 18px 50px rgb(6 22 34 / 32%);
+  animation: rise 0.16s ease-out;
+}
+@keyframes rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: none; }
+}
+.chat-dock .chat-body { flex: 1; max-height: none; }
+.chat-dock .chat-q { font-size: 13px; padding: 8px 13px; }

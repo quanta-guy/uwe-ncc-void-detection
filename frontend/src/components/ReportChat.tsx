@@ -17,7 +17,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { Bot, CornerDownLeft, Loader2, RefreshCw, User } from "lucide-react";
+import { Bot, Loader2, RefreshCw, SendHorizontal } from "lucide-react";
 import type { Fixtures, Inspection, ReviewEvent } from "../types";
 import { fieldStatus } from "../api";
 
@@ -207,25 +207,45 @@ export function ReportChat({ inspection, fx, status }: Props) {
     }
   };
 
+  /** Header is shared by every state, so the panel looks the same before a model loads. */
+  const Head = ({ subtitle }: { subtitle?: React.ReactNode }) => (
+    <div className="chat-head">
+      <div className="row">
+        <span className="chat-avatar"><Bot size={21} aria-hidden /></span>
+        <div>
+          <div className="chat-title">Report assistant</div>
+          {subtitle && <div className="chat-sub">{subtitle}</div>}
+        </div>
+      </div>
+      <svg className="chat-wave" viewBox="0 0 1200 40" preserveAspectRatio="none" aria-hidden>
+        <path d="M0,40 C300,0 900,0 1200,40 L1200,40 L0,40 Z" fill="#fff" />
+      </svg>
+    </div>
+  );
+
   if (models === null) {
     return (
-      <div className="card" style={{ marginTop: 16 }}>
-        <div className="card-title">Report assistant</div>
-        <div className="provisional">Looking for a local model…</div>
+      <div className="chat">
+        <Head subtitle="Looking for a local model…" />
+        <div className="chat-body">
+          <div className="bubble bot">Checking for a model on this machine…</div>
+        </div>
       </div>
     );
   }
 
   if (models.length === 0) {
     return (
-      <div className="card" style={{ marginTop: 16 }}>
-        <div className="card-title">Report assistant</div>
-        <div className="note warn">
-          No local model is reachable. Start Ollama and pull a small instruct model:
-          <div className="mono" style={{ marginTop: 8 }}>ollama serve</div>
-          <div className="mono">ollama pull qwen3:4b</div>
-          <div style={{ marginTop: 8 }}>
-            The assistant runs entirely on this machine — no inspection data leaves it.
+      <div className="chat">
+        <Head subtitle="No local model reachable" />
+        <div className="chat-body">
+          <div className="note warn">
+            No local model is reachable. Start Ollama and pull a small instruct model:
+            <div className="mono" style={{ marginTop: 8 }}>ollama serve</div>
+            <div className="mono">ollama pull qwen3:4b</div>
+            <div style={{ marginTop: 8 }}>
+              The assistant runs entirely on this machine — no inspection data leaves it.
+            </div>
           </div>
         </div>
       </div>
@@ -233,85 +253,84 @@ export function ReportChat({ inspection, fx, status }: Props) {
   }
 
   return (
-    <div className="card" style={{ marginTop: 16 }}>
-      <div className="card-title">
-        <span className="row" style={{ gap: 8 }}>
-          <Bot size={17} aria-hidden /> Report assistant
-        </span>
-        <span className="row" style={{ gap: 10 }}>
-          <span className="chip muted">runs locally</span>
-          <select value={model} onChange={(e) => setModel(e.target.value)}
-                  aria-label="Model" style={{ width: "auto", minHeight: 32, fontSize: 13 }}>
-            {models.map((m) => <option key={m} value={m}>{m}</option>)}
-          </select>
-          {msgs.length > 0 && (
-            <button className="btn sm" onClick={() => { abort.current?.abort(); setMsgs([]); }}>
-              <RefreshCw size={14} aria-hidden /> Clear
-            </button>
-          )}
-        </span>
+    <div className="chat">
+      <div className="chat-head">
+        <div className="spread">
+          <div className="row">
+            <span className="chat-avatar"><Bot size={21} aria-hidden /></span>
+            <div>
+              <div className="chat-title">Report assistant</div>
+              <div className="chat-sub">
+                <span className="chat-online" aria-hidden /> Running locally · {model || "no model"}
+              </div>
+            </div>
+          </div>
+          <div className="row" style={{ gap: 8 }}>
+            <select value={model} onChange={(e) => setModel(e.target.value)}
+                    aria-label="Model" style={{ width: "auto", minHeight: 34, fontSize: 13 }}>
+              {models.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+            {msgs.length > 0 && (
+              <button className="btn sm" onClick={() => { abort.current?.abort(); setMsgs([]); }}>
+                <RefreshCw size={14} aria-hidden /> Clear
+              </button>
+            )}
+          </div>
+        </div>
+        {/* Curve into the message area, so the header reads as a distinct surface. */}
+        <svg className="chat-wave" viewBox="0 0 1200 40" preserveAspectRatio="none" aria-hidden>
+          <path d="M0,40 C300,0 900,0 1200,40 L1200,40 L0,40 Z" fill="#fff" />
+        </svg>
       </div>
 
-      <div ref={scroller} style={{ maxHeight: 340, overflowY: "auto", paddingRight: 4 }}>
+      <div className="chat-body" ref={scroller}>
         {msgs.length === 0 && (
           <>
-            <div className="note" style={{ marginBottom: 12 }}>
-              Grounded in this report only — {inspection.sampleId}, {inspection.fieldCount}{" "}
-              fields. It quotes the measurements on this page and will say when something
-              is not in the report. It cannot compute a new measurement, and it cannot
-              approve or reject a sample.
+            <div className="bubble bot" style={{ maxWidth: "100%" }}>
+              Ask me about <strong>{inspection.sampleId}</strong> — {inspection.fieldCount} fields,
+              {" "}{inspection.material}. I quote the measurements on this page and will tell you
+              when something is not in the report. I cannot compute a new measurement, and I
+              cannot approve or reject a sample.
             </div>
-            <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "14px 0 4px" }}>
               {SUGGESTED.map((q) => (
-                <button key={q} className="btn" style={{ justifyContent: "flex-start", textAlign: "left" }}
-                        onClick={() => ask(q)}>
-                  {q}
-                </button>
+                <button key={q} className="chat-q" onClick={() => ask(q)}>{q}</button>
               ))}
             </div>
           </>
         )}
 
         {msgs.map((m, i) => (
-          <div key={i} className="row"
-               style={{ alignItems: "flex-start", gap: 10, margin: "12px 0" }}>
-            <span style={{
-              width: 28, height: 28, borderRadius: "50%", flex: "none", display: "grid",
-              placeItems: "center",
-              background: m.role === "user" ? "var(--teal-100)" : "var(--nav)",
-              color: m.role === "user" ? "var(--teal-700)" : "#fff",
-            }}>
-              {m.role === "user" ? <User size={15} aria-hidden /> : <Bot size={15} aria-hidden />}
-            </span>
-            <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.55, paddingTop: 3, minWidth: 0 }}>
-              {m.content || (busy && i === msgs.length - 1
-                ? <span className="row" style={{ gap: 8, color: "var(--muted)" }}>
-                    <Loader2 size={15} className="spin" aria-hidden /> reading the report…
-                  </span>
-                : null)}
-            </div>
+          <div key={i} className={`bubble ${m.role === "user" ? "me" : "bot"}`}>
+            {m.content || (busy && i === msgs.length - 1
+              ? <span className="row" style={{ gap: 8, color: "var(--muted)" }}>
+                  <Loader2 size={15} className="spin" aria-hidden />
+                  {REASONING_MODEL.test(model) ? "reasoning over the report…" : "reading the report…"}
+                </span>
+              : null)}
           </div>
         ))}
+
+        {err && <div className="note bad" style={{ marginTop: 10 }}>Model error: {err}</div>}
       </div>
 
-      {err && <div className="note bad" style={{ marginTop: 10 }}>Model error: {err}</div>}
-
-      <form className="row" style={{ marginTop: 12 }}
-            onSubmit={(e) => { e.preventDefault(); ask(input); }}>
-        <input type="text" value={input} disabled={busy}
-               placeholder={`Ask about ${inspection.sampleId}…`}
-               aria-label="Ask about this report"
-               onChange={(e) => setInput(e.target.value)} />
-        <button className="btn primary" type="submit" disabled={busy || !input.trim()}>
-          {busy ? <Loader2 size={16} className="spin" aria-hidden />
-                : <CornerDownLeft size={16} aria-hidden />}
-          Ask
-        </button>
-      </form>
-      <div className="provisional" style={{ marginTop: 8 }}>
-        Answers are generated from this report's data by a local model. Measurements come
-        from evaluation.py, not from the model — check any figure against the panels above
-        before acting on it.
+      <div className="chat-foot">
+        <form className="chat-input" onSubmit={(e) => { e.preventDefault(); ask(input); }}>
+          <input type="text" value={input} disabled={busy}
+                 placeholder={`Ask about ${inspection.sampleId}…`}
+                 aria-label="Ask about this report"
+                 onChange={(e) => setInput(e.target.value)} />
+          <button className="send" type="submit" disabled={busy || !input.trim()}
+                  aria-label="Send question">
+            {busy ? <Loader2 size={18} className="spin" aria-hidden />
+                  : <SendHorizontal size={18} aria-hidden />}
+          </button>
+        </form>
+        <div className="provisional" style={{ marginTop: 10 }}>
+          Generated from this report's data by a local model. Measurements come from
+          evaluation.py, not from the model — check any figure against the panels above
+          before acting on it.
+        </div>
       </div>
     </div>
   );
