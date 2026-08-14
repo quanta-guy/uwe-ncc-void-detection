@@ -103,6 +103,9 @@ def main():
     ap.add_argument("--target-um", type=float, default=CANONICAL_UM_PER_PX)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--require-cuda", action="store_true",
+                    help="Exit rather than fall back to CPU. On a GPU box a silent "
+                         "CPU fallback wastes hours before anyone notices.")
     ap.add_argument("--demo", action="store_true")
     args = ap.parse_args()
 
@@ -110,7 +113,14 @@ def main():
         return demo()
 
     out = Path(args.out or OUT / f"s3_unet_f{args.fold}_s{args.seed}.pt")
+    if args.require_cuda and not torch.cuda.is_available():
+        sys.exit("--require-cuda given but torch.cuda.is_available() is False. "
+                 f"torch {torch.__version__} - most likely a CPU-only wheel.")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if device.type == "cuda":
+        print(f"device: {torch.cuda.get_device_name(0)}  torch {torch.__version__}")
+    else:
+        print(f"device: CPU (torch {torch.__version__}) - training will be very slow")
     torch.manual_seed(args.seed)
 
     assign, folds = balanced_folds(index3(0))
