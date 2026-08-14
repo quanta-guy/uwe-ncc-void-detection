@@ -26,6 +26,7 @@ All severity numbers come from evaluation.py itself, unchanged.
 
 import argparse
 import csv
+import re
 import sys
 from pathlib import Path
 
@@ -124,9 +125,13 @@ def main():
         # fibres at 2-36px when it only ever saw 6-7px.
         targets = {k.get("target_um") for k in ckpts}
         assert len(targets) == 1, f"cannot ensemble across spacings: {targets}"
+        # Replace only the fold token, so anything that distinguishes one ensemble
+        # from another - a seed suffix, a spacing tag - survives. Stripping trailing
+        # characters instead collapsed two seeds of the same family onto one name and
+        # silently merged their results.
         name = Path(members[0]).stem
         if len(members) > 1:
-            name = f"{name.rstrip('01234fs_')}_ens{len(members)}"
+            name = re.sub(r"_?f\d+", f"_ens{len(members)}", name, count=1)
         specs.append({"name": name, "nets": list(nets), "thr": float(thr),
                       "target_um": targets.pop(),
                       "tf": build_transforms(norm)[1] if norm else None})
