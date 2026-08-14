@@ -66,9 +66,11 @@ def discover():
     averaged. Ordering puts the largest ensembles first so the production model
     is the default without hard-coding its path.
     """
-    roots = [REPO / "runs", REPO / "archive" / "checkpoints",
-             REPO / "solution2" / "runs", REPO / "solution3" / "runs",
-             REPO / "solution4" / "runs"]
+    # runs/ is the submission model; models/ holds the curated alternatives.
+    # archive/ is deliberately NOT scanned: solution 2/3 checkpoints need their own
+    # preprocessing (normalisation, physical resampling) that this pipeline does not
+    # apply - the shape gate would pass them and they would then quietly mispredict.
+    roots = [REPO / "runs", REPO / "models"]
     groups: dict[str, list[Path]] = {}
     for root in roots:
         if not root.is_dir():
@@ -84,9 +86,47 @@ def discover():
             "count": len(paths),
             "paths": [p.relative_to(REPO).as_posix() for p in paths],
             "sizeMb": round(sum(p.stat().st_size for p in paths) / 1e6, 1),
+            "record": RECORDS.get(key),
         })
     return sorted(out, key=lambda g: (-g["count"], g["id"]))
 
+
+#: Validation record per model group - measured this project, not asserted here.
+#: The two ensembles were scored out-of-fold over all 28 micrographs (3100 images)
+#: by evaluation.py; tp/fp/fn are specimen-level pass/fail calls at the 25 um line
+#: and tn is the remainder. The singles were never given an OOF confusion run, so
+#: they carry only their held-out-split Dice - showing a matrix for them would be
+#: inventing one.
+N_OOF_IMAGES = 3100
+RECORDS = {
+    "runs/unet": {
+        "final": 0.8869, "diceVoid": 0.7562, "f2": 0.9383,
+        "tp": 769, "fp": 105, "fn": 37, "tn": N_OOF_IMAGES - 769 - 105 - 37,
+        "operatingPoint": "threshold 0.4 · min-size 4",
+        "protocol": "out-of-fold, 28 micrographs, 3100 images",
+        "note": "Submission model. Finds 6 of 6 visible Test-set voids.",
+    },
+    "models/unet4_s2": {
+        "final": 0.8788, "diceVoid": 0.7527, "f2": 0.9340,
+        "tp": 764, "fp": 102, "fn": 42, "tn": N_OOF_IMAGES - 764 - 102 - 42,
+        "operatingPoint": "threshold 0.3 · min-size 4",
+        "protocol": "out-of-fold, 28 micrographs, 3100 images",
+        "note": "Solution 4 (fixed augmentation RNG), best of 3 seeds. "
+                "Test verdicts identical to the submission model.",
+    },
+    "models/unet_single": {
+        "valDice": 0.7300,
+        "protocol": "single held-out split only",
+        "note": "Original single checkpoint. No out-of-fold confusion was measured, "
+                "and with one member model disagreement is always zero.",
+    },
+    "models/unetpp_r34": {
+        "valDice": 0.7254,
+        "protocol": "single held-out split only",
+        "note": "U-Net++ / ResNet-34 from the architecture sweep. No out-of-fold "
+                "confusion was measured.",
+    },
+}
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 _nets: dict[str, list] = {}
@@ -374,9 +414,10 @@ def delete_imported(inspection_id: str):
 def demo():
     """Discovery groups folds correctly and validation rejects a broken checkpoint."""
     groups = discover()
-    assert groups, "no checkpoints discovered"
+    assert len(groups) == 4, [g["id"] for g in groups]   # the curated four, no strays
     prod = next(g for g in groups if g["id"] == "runs/unet")
     assert prod["count"] == 5, prod
+    assert next(g for g in groups if g["id"] == "models/unet4_s2")["count"] == 5
     assert fold_group(Path("unet_f12.pt")) == "unet"
     assert fold_group(Path("unet_d3.pt")) == "unet_d3", "stripped a non-fold suffix"
 

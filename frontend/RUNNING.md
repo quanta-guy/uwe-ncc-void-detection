@@ -43,12 +43,17 @@ layers.
 
 ## Swapping the model
 
-Settings discovers every `*.pt` under `runs/`, `archive/checkpoints/` and
-`solution*/runs/`, grouping folds into the ensembles they form. `Validate and
-activate` opens the checkpoint, pushes a real tensor through it, and only activates it
-if the output is three classes at the input's own size. Checkpoints from solutions 2
-and 3 are listed and will fail that gate where their builder differs — which is the
-gate doing its job, not a bug.
+Settings discovers every `*.pt` under `runs/` (the submission model) and `models/`
+(the curated alternatives), grouping folds into the ensembles they form. `Validate
+and activate` opens the checkpoint, pushes a real tensor through it, and only
+activates it if the output is three classes at the input's own size. Selecting a
+model also shows its validation record — an out-of-fold confusion matrix for the two
+ensembles that were measured that way, and an honest "no matrix was measured" for the
+singles.
+
+`archive/` is deliberately not scanned: solution 2/3 checkpoints there need their own
+preprocessing (normalisation, physical resampling) that this pipeline does not apply.
+The shape gate would pass them and they would then quietly mispredict.
 
 ## Tests
 

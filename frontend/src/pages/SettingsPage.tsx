@@ -17,8 +17,69 @@ import { useData } from "../app";
 import {
   activateModel, clearReviews, listModels, restoreInspections, validateModel,
 } from "../api";
-import type { ModelGroup, ValidationResult } from "../api";
+import type { ModelGroup, ModelRecord, ValidationResult } from "../api";
 import { Card, MRow } from "../components/common";
+
+/**
+ * Specimen-level confusion at the 25 µm line, for models that were actually given an
+ * out-of-fold run. FN is the cell that matters - a missed failing specimen ships a
+ * bad part - which is why it is tinted, not TP.
+ */
+function ConfusionMatrix({ r }: { r: ModelRecord }) {
+  if (r.tp === undefined) {
+    return (
+      <div className="note warn" style={{ marginTop: 12 }}>
+        No out-of-fold confusion was measured for this model — held-out split Dice{" "}
+        <strong>{r.valDice?.toFixed(4)}</strong> only. Showing a matrix here would be
+        inventing one.
+      </div>
+    );
+  }
+  const cell = (v: number | undefined, tone?: "good" | "bad") => (
+    <td style={{
+      padding: "8px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums",
+      fontWeight: 600,
+      background: tone === "bad" ? "#fdeaea" : tone === "good" ? "#e8f5ea" : undefined,
+    }}>{v?.toLocaleString()}</td>
+  );
+  const th = { padding: "8px 14px", fontWeight: 600, color: "var(--muted)", fontSize: 12.5 };
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="row" style={{ gap: 16, flexWrap: "wrap", marginBottom: 8 }}>
+        <span className="chip pass">Final score {r.final?.toFixed(4)}</span>
+        <span className="chip">Dice_void {r.diceVoid?.toFixed(4)}</span>
+        <span className="chip">F2 {r.f2?.toFixed(4)}</span>
+      </div>
+      <table style={{ borderCollapse: "collapse", border: "1px solid var(--border)" }}
+             aria-label="Specimen-level confusion matrix">
+        <thead>
+          <tr>
+            <th style={th}></th>
+            <th style={th}>Actual FAIL</th>
+            <th style={th}>Actual PASS</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style={{ borderTop: "1px solid var(--border)" }}>
+            <th style={{ ...th, textAlign: "left" }}>Predicted FAIL</th>
+            {cell(r.tp, "good")}
+            {cell(r.fp)}
+          </tr>
+          <tr style={{ borderTop: "1px solid var(--border)" }}>
+            <th style={{ ...th, textAlign: "left" }}>Predicted PASS</th>
+            {cell(r.fn, "bad")}
+            {cell(r.tn)}
+          </tr>
+        </tbody>
+      </table>
+      <div className="note" style={{ marginTop: 10 }}>
+        {r.protocol} · {r.operatingPoint}. Pass/fail is per specimen at the 25 µm
+        severity line, scored by NCC's evaluation code. The {r.fn} missed failures are
+        the cost the F2 metric weighs 4× a false alarm.
+      </div>
+    </div>
+  );
+}
 
 export function SettingsPage() {
   const { fx, reviews, hidden } = useData();
@@ -100,7 +161,7 @@ export function SettingsPage() {
                     : <><ShieldCheck size={16} aria-hidden /> Validate and activate</>}
                 </button>
                 {result && (
-                  <span className={`chip ${result.ok ? "pass" : "fail"}`}>
+                  <span className={`chip validate-result ${result.ok ? "pass" : "fail"}`}>
                     {result.ok
                       ? <CheckCircle2 size={14} aria-hidden />
                       : <AlertTriangle size={14} aria-hidden />}
@@ -128,6 +189,16 @@ export function SettingsPage() {
                   inspection is allowed to run on it.
                 </div>
               )}
+
+              {(() => {
+                const rec = models.find((m) => m.id === selected)?.record;
+                return rec ? (
+                  <>
+                    <ConfusionMatrix r={rec} />
+                    <div className="note" style={{ marginTop: 10 }}>{rec.note}</div>
+                  </>
+                ) : null;
+              })()}
             </>
           )}
 

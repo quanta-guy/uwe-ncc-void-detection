@@ -49,8 +49,9 @@ await page.evaluate(() => {
 let verdict = "";
 for (let i = 0; i < 40 && !verdict; i++) {
   await wait(500);
+  // The record card also renders score chips, so target the validation verdict alone.
   verdict = await page.evaluate(() =>
-    document.querySelector(".chip.pass, .chip.fail")?.textContent?.trim() ?? "");
+    document.querySelector(".validate-result")?.textContent?.trim() ?? "");
 }
 check("Validate actually loads the checkpoint and reports a real forward pass",
       /3 classes · 256x256/.test(verdict), verdict || "no verdict");

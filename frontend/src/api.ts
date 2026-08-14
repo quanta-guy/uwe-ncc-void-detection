@@ -48,12 +48,27 @@ export async function loadFixtures(): Promise<Fixtures> {
  * being absent as a plain message rather than throwing the UI into an error state.
  */
 
+export interface ModelRecord {
+  final?: number;
+  diceVoid?: number;
+  f2?: number;
+  tp?: number;
+  fp?: number;
+  fn?: number;
+  tn?: number;
+  valDice?: number;
+  operatingPoint?: string;
+  protocol: string;
+  note: string;
+}
+
 export interface ModelGroup {
   id: string;
   label: string;
   count: number;
   paths: string[];
   sizeMb: number;
+  record: ModelRecord | null;
 }
 
 export interface ValidationResult {
