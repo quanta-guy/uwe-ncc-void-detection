@@ -35,6 +35,11 @@ function ConfusionMatrix({ r }: { r: ModelRecord }) {
       </div>
     );
   }
+  // Derived from the same matrix, not stored separately - one source of truth.
+  // Recall is the headline number here: a missed failing specimen ships a bad part,
+  // which is exactly why the challenge scores F2 rather than F1.
+  const recall = r.tp! / (r.tp! + r.fn!);
+  const precision = r.tp! / (r.tp! + r.fp!);
   const cell = (v: number | undefined, tone?: "good" | "bad") => (
     <td style={{
       padding: "8px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums",
@@ -49,6 +54,8 @@ function ConfusionMatrix({ r }: { r: ModelRecord }) {
         <span className="chip pass">Final score {r.final?.toFixed(4)}</span>
         <span className="chip">Dice_void {r.diceVoid?.toFixed(4)}</span>
         <span className="chip">F2 {r.f2?.toFixed(4)}</span>
+        <span className="chip">Failure recall {(100 * recall).toFixed(1)}%</span>
+        <span className="chip">Precision {(100 * precision).toFixed(1)}%</span>
       </div>
       <table style={{ borderCollapse: "collapse", border: "1px solid var(--border)" }}
              aria-label="Specimen-level confusion matrix">
@@ -74,8 +81,10 @@ function ConfusionMatrix({ r }: { r: ModelRecord }) {
       </table>
       <div className="note" style={{ marginTop: 10 }}>
         {r.protocol} · {r.operatingPoint}. Pass/fail is per specimen at the 25 µm
-        severity line, scored by NCC's evaluation code. The {r.fn} missed failures are
-        the cost the F2 metric weighs 4× a false alarm.
+        severity line, scored by NCC's evaluation code. Failure recall is
+        TP&nbsp;/&nbsp;(TP&nbsp;+&nbsp;FN): the fraction of truly failing specimens
+        this model catches. The {r.fn} it misses are the cost the F2 metric weighs
+        4× a false alarm.
       </div>
     </div>
   );
