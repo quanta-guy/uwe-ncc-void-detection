@@ -14,3 +14,9 @@ evaluation.py
 solution2/*.log
 solution3/void_index.csv
 solution3/micrograph_stats.csv
+node_modules/
+dist/
+frontend/node_modules/
+frontend/dist/
+frontend/public/data/
+frontend/tools/screenshots/
