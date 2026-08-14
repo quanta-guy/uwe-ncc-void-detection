@@ -154,3 +154,62 @@ inert. What does not follow is that canonical resampling is the right response
 to the scale spread. Downsampling to a coarse canonical spacing, or resampling
 only the extremes, would test the idea without inverting the sharpness
 distribution. That is the experiment to run next, not this one.
+
+## Coarse spacing (1.33 um/px): diagnosis confirmed, still loses
+
+Rerun at the modal training spacing, so most images are downsampled rather
+than upsampled and the Test images are downsampled too - both sides treated
+alike.
+
+| fold | Dice | F2 | final |
+|---|---|---|---|
+| 0 | 0.8319 | 0.9241 | 0.9241 |
+| 1 | 0.8232 | 0.9915 | 0.9915 |
+| 2 | 0.6216 | 0.8974 | 0.6974 |
+| 3 | 0.8052 | 0.9584 | 0.9584 |
+| 4 | 0.7703 | 0.9396 | 0.9047 |
+| | | **mean** | **0.8952** (0.57um/px gave 0.8743) |
+
+Mean Dice rose 0.7407 to 0.7704, which is what lifted the score - the gate was
+what sank fold 2.
+
+**On Test it recovers one of the two voids that 0.57 missed:**
+
+```
+17-5-2_zoom_mid              tiles with void   total area
+  solution 1 (native)              2             469 um2
+  solution 3 fine 0.57             0               0 um2
+  solution 3 coarse 1.33           1             410 um2
+
+..._512_768   sol1 32.3 FAIL   fine 0.0 pass   coarse 36.2 FAIL
+..._512_512   sol1 28.3 FAIL   fine 0.0 pass   coarse  0.0 pass
+```
+
+Reversing the resampling direction recovered a detection that upsampling lost
+entirely. The sharpness-gap diagnosis holds.
+
+**But coarse pays elsewhere.** On `2-6-1` it reports ~25% lower severity than
+solution 1 throughout (30.1 vs 38.6, 25.9 vs 35.6, 47.7 vs 59.3, 34.1 vs 39.3)
+and finds 1188um2 against 1891 - 63%. One of those sits at 25.9 against a fail
+line of 25. Downsampling closed the domain gap by discarding the detail small
+voids are made of.
+
+## Conclusion
+
+Both canonical spacings lose to native resolution, for opposite reasons:
+
+| | mechanism | Test |
+|---|---|---|
+| fine 0.57 | upsamples 99% of training; Test is natively sharp | misses both voids |
+| coarse 1.33 | downsamples both, gap closed, detail lost | recovers 1 of 2, under-segments |
+| solution 1 | no resampling, scale jitter instead | finds both |
+
+The 4um fibre invariant is real and the scale spread is genuinely magnification.
+What does not follow is that resampling to a single canonical spacing is the
+right response: on this data every choice of canonical spacing trades a
+sharpness gap against lost detail, and solution 1's scale jitter avoids both by
+never resampling at all.
+
+The other three defects found here remain worth fixing regardless - the frozen
+augmentation RNG above all, which made much of solution 1's augmentation inert,
+and which no experiment here has yet isolated the value of.
