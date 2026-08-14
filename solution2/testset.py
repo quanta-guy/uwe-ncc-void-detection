@@ -29,6 +29,7 @@ import csv
 import sys
 from pathlib import Path
 
+import cv2
 import numpy as np
 import torch
 from PIL import Image, ImageDraw
@@ -44,6 +45,8 @@ from evaluation import (SEVERITY_THRESHOLD, TooManyRegionsError,  # noqa: E402
 from evaluate import class_prob, load_net  # noqa: E402
 from pipeline import build_transforms  # noqa: E402
 from predict import to_mask  # noqa: E402
+sys.path.insert(0, str(REPO / 'solution3'))
+from data3 import resample  # noqa: E402
 
 OUT = Path(__file__).resolve().parent / "results" / "testset"
 LUT = np.array([[45, 45, 60], [205, 200, 190], [225, 55, 55]], np.uint8)
@@ -116,10 +119,16 @@ def main():
         norms = {k["norm"] for k in ckpts}
         assert len(norms) == 1, f"cannot ensemble across normalisations: {norms}"
         norm = norms.pop()
+        # Solution 3 trained on images resampled to a canonical um/pixel, so it
+        # must be fed the same way. Feeding it native resolution would present
+        # fibres at 2-36px when it only ever saw 6-7px.
+        targets = {k.get("target_um") for k in ckpts}
+        assert len(targets) == 1, f"cannot ensemble across spacings: {targets}"
         name = Path(members[0]).stem
         if len(members) > 1:
-            name = f"{name.rstrip('01234f_')}_ens{len(members)}"
+            name = f"{name.rstrip('01234fs_')}_ens{len(members)}"
         specs.append({"name": name, "nets": list(nets), "thr": float(thr),
+                      "target_um": targets.pop(),
                       "tf": build_transforms(norm)[1] if norm else None})
     print()
 
@@ -137,7 +146,17 @@ def main():
         tiles = [tile(img, f"{row['stem']}", None, img.shape[1], is_image=True)]
 
         for s in specs:
-            p = class_prob(s["nets"], s["tf"], img, device)
+            if s["target_um"]:
+                # Predict at the canonical spacing, then bring the probability
+                # map back to the native grid - severity is in microns, so a
+                # mask on the wrong grid mis-measures a void it located.
+                r_img, _, _ = resample(img, None, um, s["target_um"])
+                p = class_prob(s["nets"], s["tf"], r_img, device)
+                if p.shape[1:] != img.shape[:2]:
+                    p = np.stack([cv2.resize(c, (img.shape[1], img.shape[0]),
+                                             interpolation=cv2.INTER_LINEAR) for c in p])
+            else:
+                p = class_prob(s["nets"], s["tf"], img, device)
             mask = to_mask(p[VOID_CLASS], (p[1] > p[0]).astype(np.uint8),
                            s["thr"], args.min_size)
             info = anatomy(mask, um)

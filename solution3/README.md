@@ -110,3 +110,47 @@ python solution3/evaluate3.py --oof --runs solution3/runs
 
 `bash l4_run3.sh` does five folds, the nested score, and three all-data seeds
 for the submission ensemble.
+
+## Result: it does not ship, and the reason is worth more than the method
+
+Nested out-of-fold across five folds:
+
+| fold | threshold | min_size | Dice | F2 | final |
+|---|---|---|---|---|---|
+| 0 | 0.3 | 10 | 0.8051 | 0.9282 | 0.9282 |
+| 1 | 0.3 | 10 | 0.7643 | 0.9810 | 0.9372 |
+| 2 | 0.3 | 10 | 0.6045 | 0.9129 | 0.6899 |
+| 3 | 0.3 | 10 | 0.7841 | 0.9611 | 0.9420 |
+| 4 | 0.4 | 10 | 0.7456 | 0.9382 | 0.8744 |
+| | | | | **mean** | **0.8743** (sd 0.096) |
+
+Strong detection throughout - F2 0.91 to 0.98. Fold 2 collapses purely on the
+Dice gate, which scales a healthy 0.9129 F2 down by 0.6045/0.8.
+
+On the Test set it loses to solution 1: 4 FAIL against 6, missing two plainly
+visible voids on `17-5-2_zoom_mid`. Not an operating-point problem - at
+threshold 0.1 with min_size 2 it still detects nothing there.
+
+**Why: the fix for scale introduced a sharpness nuisance.**
+
+```
+training images already at 0.57 um/px:   28 of 3100  (0.9%)
+most common training spacing:            1.33 um/px  (1071 images)
+test images:                             0.57 um/px, natively, all of them
+```
+
+Reaching canonical spacing means upsampling 99.1% of the training data - 2.33x
+from 1.33um/px, 3.5x from 2.00um/px. Interpolation makes those textures soft.
+The Test images are native and sharp. The model learned voids in upsampled
+imagery and is asked about native imagery.
+
+Its folds cannot see this, because every fold shares the same interpolation.
+That is the same failure that made MicroNet look competitive on folds while it
+collapsed on an unseen micrograph, arriving by a different route.
+
+**The four defects found here are real and remain worth fixing** - the frozen
+augmentation RNG especially, which made much of solution 1's augmentation
+inert. What does not follow is that canonical resampling is the right response
+to the scale spread. Downsampling to a coarse canonical spacing, or resampling
+only the extremes, would test the idea without inverting the sharpness
+distribution. That is the experiment to run next, not this one.
